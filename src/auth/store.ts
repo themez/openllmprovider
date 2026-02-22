@@ -1,5 +1,5 @@
-import type { AuthCredential } from '../types/plugin.js'
 import { createLogger } from '../logger.js'
+import type { AuthCredential } from '../types/plugin.js'
 
 const log = createLogger('auth')
 

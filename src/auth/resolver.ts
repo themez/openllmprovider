@@ -1,6 +1,6 @@
+import { createLogger } from '../logger.js'
 import type { StorageAdapter } from '../storage/index.js'
 import type { SecretRef, SecretResolver } from '../types/auth.js'
-import { createLogger } from '../logger.js'
 
 const log = createLogger('auth:resolver')
 
