@@ -12,6 +12,7 @@ export interface ProviderState {
   key?: string
   options: Record<string, unknown>
   source: 'env' | 'disk' | 'auth' | 'plugin' | 'config' | 'none'
+  location?: string
 }
 
 async function resolveSecretRef(ref: SecretRef): Promise<string | undefined> {
@@ -45,27 +46,26 @@ export async function buildProviderState(config: {
     const options: Record<string, unknown> = {}
     let key: string | undefined
     let source: ProviderState['source'] = 'none'
-
+    let location: string | undefined
     if (catalogProvider.baseURL !== undefined) options.baseURL = catalogProvider.baseURL
     if (catalogProvider.headers !== undefined) options.headers = { ...catalogProvider.headers }
     if (catalogProvider.options !== undefined) Object.assign(options, catalogProvider.options)
-
     if (catalogProvider.env !== undefined) {
       for (const envVar of catalogProvider.env) {
         const val = process.env[envVar]
         if (val !== undefined) {
           key = val
           source = 'env'
-          log('%s: resolved key from env var %s', pid, envVar)
+          location = `env:${envVar}`
           break
         }
       }
     }
-
     const authCred = authCredentials[pid]
     if (authCred?.key !== undefined) {
       key = authCred.key
       source = 'auth'
+      location = authCred.location
       const bp = catalogProvider.bundledProvider
       if (authCred.type === 'oauth' && bp !== undefined) {
         if (GOOGLE_PROVIDERS.has(bp)) {
@@ -76,17 +76,11 @@ export async function buildProviderState(config: {
             h.set('Authorization', `Bearer ${token}`)
             return globalThis.fetch(url, { ...init, headers: h })
           }
-          log('%s: resolved OAuth token (Google Bearer fetch override)', pid)
         } else if (AUTH_TOKEN_PROVIDERS.has(bp)) {
           options.authToken = authCred.key
           options.apiKey = undefined
           key = undefined
-          log('%s: resolved OAuth token (authToken for Bearer auth)', pid)
-        } else {
-          log('%s: resolved OAuth token as apiKey (type=%s)', pid, authCred.type)
         }
-      } else {
-        log('%s: resolved key from auth (type=%s)', pid, authCred.type ?? 'api')
       }
     }
 
@@ -101,7 +95,7 @@ export async function buildProviderState(config: {
       if (typeof pluginKey === 'string') {
         key = pluginKey
         source = 'plugin'
-        log('%s: resolved key from plugin', pid)
+        // Plugin wraps the auth — keep the original location for tracing
       }
     }
 
@@ -128,8 +122,10 @@ export async function buildProviderState(config: {
       }
     }
 
-    log('%s: source=%s, hasKey=%s', pid, source, key !== undefined)
-    result[pid] = { id: pid, key, options, source }
+    if (source !== 'none') {
+      log('%s: source=%s, location=%s', pid, source, location ?? 'n/a')
+    }
+    result[pid] = { id: pid, key, options, source, location }
   }
 
   log('provider state built for %d providers', Object.keys(result).length)

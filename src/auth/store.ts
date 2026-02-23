@@ -208,10 +208,10 @@ export function createAuthStore(options?: AuthStoreOptions): AuthStore {
           if (value) {
             seen.add(providerId)
             const arr = discoveredCredentials.get(providerId) ?? []
-            arr.push({ type: 'api', key: value })
+            arr.push({ type: 'api', key: value, location: `env:${envVar}` })
             discoveredCredentials.set(providerId, arr)
             results.push({ providerId, source: 'env', key: value })
-            log('discover: %s via env (%s)', providerId, envVar)
+            log('discover: %s [api] from env:%s', providerId, envVar)
           }
         }
       }
@@ -220,7 +220,6 @@ export function createAuthStore(options?: AuthStoreOptions): AuthStore {
         const scanners = discoverOptions?.scanners ?? DEFAULT_SCANNERS
         const ctx = discoverOptions?.scanContext ?? createNodeScanContext()
         const diskResults = await runDiskScanners(scanners, ctx)
-        log('discover: disk scan found %d results', diskResults.length)
 
         for (const disk of diskResults) {
           const credType = disk.credentialType ?? 'api'
@@ -232,17 +231,16 @@ export function createAuthStore(options?: AuthStoreOptions): AuthStore {
               key: disk.key,
               location: disk.source,
             })
-            log('discover: %s via disk (%s), hasKey=%s', disk.providerId, disk.source, disk.key !== undefined)
           }
           if (disk.key !== undefined) {
             const arr = discoveredCredentials.get(disk.providerId) ?? []
-            const cred: AuthCredential = { type: credType, key: disk.key }
+            const cred: AuthCredential = { type: credType, key: disk.key, location: disk.source }
             if (disk.refresh) cred.refresh = disk.refresh
             if (disk.accountId) cred.accountId = disk.accountId
             if (disk.expires) cred.expires = disk.expires
             arr.push(cred)
             discoveredCredentials.set(disk.providerId, arr)
-            log('discover: %s stored credential from disk (%s), type=%s', disk.providerId, disk.source, credType)
+            log('discover: %s [%s] from %s', disk.providerId, credType, disk.source)
           }
         }
       }

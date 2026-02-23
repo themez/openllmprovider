@@ -84,11 +84,16 @@ export function createProviderStore(authStore: AuthStore, config?: ProviderStore
 
   return {
     async getLanguageModel(providerId: string, modelId: string): Promise<LanguageModelV3> {
-      log('getLanguageModel(%s, %s)', providerId, modelId)
-
       const state = await getState()
       const providerState = state[providerId]
 
+      log(
+        'getLanguageModel(%s, %s) — auth: source=%s, location=%s',
+        providerId,
+        modelId,
+        providerState?.source ?? 'none',
+        providerState?.location ?? 'unknown'
+      )
       if (providerState === undefined) {
         throw new Error(`Provider not found in catalog: ${providerId}`)
       }

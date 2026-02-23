@@ -3,11 +3,13 @@ export type { ProviderStore, ProviderStoreConfig } from './provider/index.js'
 
 export { createAuthStore } from './auth/index.js'
 export type { AuthStore, AuthStoreOptions, DiscoveredCredential, DiscoverOptions } from './auth/index.js'
+export { DEFAULT_SCANNERS } from './auth/index.js'
 export type { DiskScanner, DiskScanResult, ScanContext } from './auth/index.js'
 
 export { registerPlugin, getPlugins, getPluginForProvider } from './plugin/index.js'
 export { copilotPlugin } from './plugin/copilot.js'
 export { codexPlugin } from './plugin/codex.js'
+export { googlePlugin } from './plugin/google.js'
 
 export { MemoryStorage, FileStorage, createDefaultStorage } from './storage/index.js'
 export type { StorageAdapter } from './storage/index.js'
