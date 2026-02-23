@@ -11,11 +11,11 @@ import { googlePlugin } from '../plugin/google.js'
 import { registerPlugin } from '../plugin/index.js'
 import type { ModelDefinition } from '../types/model.js'
 import type { ProviderUserConfig } from '../types/provider.js'
-import { BUNDLED_PROVIDERS } from './bundled.js'
+import { isProviderInstalled, loadProvider } from './bundled.js'
 import { buildProviderState } from './state.js'
 
 export type { ProviderInstance, ProviderFactory } from './bundled.js'
-export { BUNDLED_PROVIDERS } from './bundled.js'
+export { loadProvider, isProviderInstalled, getAllProviderPackages } from './bundled.js'
 
 const log = createLogger('provider')
 
@@ -68,7 +68,6 @@ export interface ProviderStore {
 
 export function createProviderStore(authStore: AuthStore, config?: ProviderStoreConfig): ProviderStore {
   const catalog = new Catalog()
-  // Auto-register built-in plugins
   registerPlugin(copilotPlugin)
   registerPlugin(codexPlugin)
   registerPlugin(googlePlugin)
@@ -117,11 +116,11 @@ export function createProviderStore(authStore: AuthStore, config?: ProviderStore
     return providerState !== undefined && providerState.source !== 'none'
   }
 
-
-  function isProviderUsable(providerId: string): boolean {
+  async function checkProviderUsable(providerId: string): Promise<boolean> {
     const catalogProvider = catalog.getProvider(providerId)
     const bundledKey = resolveBundledProviderKey(providerId, catalogProvider)
-    return bundledKey !== undefined && BUNDLED_PROVIDERS[bundledKey] !== undefined
+    if (bundledKey === undefined) return false
+    return isProviderInstalled(bundledKey)
   }
 
   return {
@@ -150,10 +149,10 @@ export function createProviderStore(authStore: AuthStore, config?: ProviderStore
         )
       }
 
-      const factory = BUNDLED_PROVIDERS[bundledKey]
+      const factory = await loadProvider(bundledKey)
 
       if (factory === undefined) {
-        throw new Error(`Bundled provider not available: ${bundledKey}`)
+        throw new Error(`Provider package not available: ${bundledKey}. Install it with: npm install ${bundledKey}`)
       }
 
       log('creating SDK for %s using %s', providerId, bundledKey)
@@ -175,12 +174,18 @@ export function createProviderStore(authStore: AuthStore, config?: ProviderStore
 
     async listProviders(options?: ProviderListOptions): Promise<CatalogProvider[]> {
       await ensureCatalogEnriched()
-      const providers = catalog.listProviders().filter((p) => isProviderUsable(p.id))
+      const allProviders = catalog.listProviders()
+
+      const usabilityChecks = await Promise.all(
+        allProviders.map(async (p) => ({ provider: p, usable: await checkProviderUsable(p.id) }))
+      )
+      const installedProviders = usabilityChecks.filter((r) => r.usable).map((r) => r.provider)
+
       if (options?.includeUnavailable === true) {
-        return providers
+        return installedProviders
       }
       const state = await getState()
-      return providers.filter((provider) => hasProviderAuth(state, provider.id))
+      return installedProviders.filter((provider) => hasProviderAuth(state, provider.id))
     },
 
     async listModels(providerId?: string, options?: ModelListOptions): Promise<ModelDefinition[]> {
@@ -197,10 +202,19 @@ export function createProviderStore(authStore: AuthStore, config?: ProviderStore
         return catalog.listModels(providerId)
       }
 
-      const providers = catalog.listProviders().filter((p) => isProviderUsable(p.id) && hasProviderAuth(state, p.id))
+      const allProviders = catalog.listProviders()
+      const usabilityChecks = await Promise.all(
+        allProviders.map(async (p) => ({
+          provider: p,
+          usable: (await checkProviderUsable(p.id)) && hasProviderAuth(state, p.id),
+        }))
+      )
+
       const results: ModelDefinition[] = []
-      for (const provider of providers) {
-        results.push(...catalog.listModels(provider.id))
+      for (const { provider, usable } of usabilityChecks) {
+        if (usable) {
+          results.push(...catalog.listModels(provider.id))
+        }
       }
       return results
     },
