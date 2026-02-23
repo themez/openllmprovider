@@ -4,7 +4,9 @@ import { createAuthStore } from '../auth/store.js'
 import type { CatalogProvider, ExtendConfig } from '../catalog/catalog.js'
 import { Catalog } from '../catalog/catalog.js'
 import { createLogger } from '../logger.js'
+import { codexPlugin } from '../plugin/codex.js'
 import { copilotPlugin } from '../plugin/copilot.js'
+import { googlePlugin } from '../plugin/google.js'
 import { registerPlugin } from '../plugin/index.js'
 import type { ModelDefinition } from '../types/model.js'
 import type { ProviderUserConfig } from '../types/provider.js'
@@ -55,6 +57,8 @@ export function createProviderStore(authStore: AuthStore, config?: ProviderStore
   const catalog = new Catalog()
   // Auto-register built-in plugins
   registerPlugin(copilotPlugin)
+  registerPlugin(codexPlugin)
+  registerPlugin(googlePlugin)
   catalog.extend({
     providers: Object.fromEntries(
       Object.entries(DEFAULT_PROVIDERS).map(([id, p]) => [
