@@ -1,5 +1,11 @@
 export { createProviderStore, getLanguageModel } from './provider/index.js'
-export type { ProviderStore, ProviderStoreConfig } from './provider/index.js'
+export type {
+  ProviderStore,
+  ProviderStoreConfig,
+  ProviderListOptions,
+  ModelListOptions,
+  GetModelOptions,
+} from './provider/index.js'
 
 export { createAuthStore } from './auth/index.js'
 export type { AuthStore, AuthStoreOptions, DiscoveredCredential, DiscoverOptions } from './auth/index.js'

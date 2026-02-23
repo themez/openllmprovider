@@ -1,4 +1,4 @@
-import { createAuthStore, createProviderStore } from 'openllmprovider'
+import { createAuthStore, createProviderStore } from '../src/index.js'
 
 const authStore = createAuthStore()
 const providerStore = createProviderStore(authStore)
@@ -31,7 +31,7 @@ console.log(
   providers.map((p) => p.id)
 )
 
-const models = providerStore.listModels('my-company-llm')
+const models = await providerStore.listModels('my-company-llm', { includeUnavailable: true })
 console.log(
   'Models for my-company-llm:',
   models.map((m) => m.modelId)

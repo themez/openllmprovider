@@ -46,12 +46,24 @@ export interface ProviderStoreConfig {
   userConfig?: Record<string, ProviderUserConfig>
 }
 
+export interface ProviderListOptions {
+  includeUnavailable?: boolean
+}
+
+export interface ModelListOptions {
+  includeUnavailable?: boolean
+}
+
+export interface GetModelOptions {
+  includeUnavailable?: boolean
+}
+
 export interface ProviderStore {
   getLanguageModel(providerId: string, modelId: string): Promise<LanguageModelV3>
   extend(config: ExtendConfig): void
-  listProviders(): Promise<CatalogProvider[]>
-  listModels(providerId?: string): ModelDefinition[]
-  getModel(providerId: string, modelId: string): ModelDefinition | undefined
+  listProviders(options?: ProviderListOptions): Promise<CatalogProvider[]>
+  listModels(providerId?: string, options?: ModelListOptions): Promise<ModelDefinition[]>
+  getModel(providerId: string, modelId: string, options?: GetModelOptions): Promise<ModelDefinition | undefined>
 }
 
 export function createProviderStore(authStore: AuthStore, config?: ProviderStoreConfig): ProviderStore {
@@ -71,6 +83,7 @@ export function createProviderStore(authStore: AuthStore, config?: ProviderStore
   })
   const userConfig = config?.userConfig
   let stateCache: Promise<Record<string, import('./state.js').ProviderState>> | null = null
+  let catalogRefreshTask: Promise<void> | null = null
 
   function invalidateState() {
     stateCache = null
@@ -84,8 +97,29 @@ export function createProviderStore(authStore: AuthStore, config?: ProviderStore
     return stateCache
   }
 
+  async function ensureCatalogEnriched(): Promise<void> {
+    if (catalogRefreshTask === null) {
+      catalogRefreshTask = (async () => {
+        const result = await catalog.refresh()
+        if (!result.success) {
+          log('catalog refresh failed: %s', result.error?.message ?? 'unknown error')
+          return
+        }
+        log('catalog refreshed with %d providers', result.updatedProviders.length)
+        invalidateState()
+      })()
+    }
+    await catalogRefreshTask
+  }
+
+  function hasProviderAuth(state: Record<string, import('./state.js').ProviderState>, providerId: string): boolean {
+    const providerState = state[providerId]
+    return providerState !== undefined && providerState.source !== 'none'
+  }
+
   return {
     async getLanguageModel(providerId: string, modelId: string): Promise<LanguageModelV3> {
+      await ensureCatalogEnriched()
       const state = await getState()
       const providerState = state[providerId]
 
@@ -132,19 +166,50 @@ export function createProviderStore(authStore: AuthStore, config?: ProviderStore
       invalidateState()
     },
 
-    async listProviders(): Promise<CatalogProvider[]> {
+    async listProviders(options?: ProviderListOptions): Promise<CatalogProvider[]> {
+      await ensureCatalogEnriched()
+      const providers = catalog.listProviders()
+      if (options?.includeUnavailable === true) {
+        return providers
+      }
       const state = await getState()
-      return catalog.listProviders().filter((p) => {
-        const s = state[p.id]
-        return s !== undefined && s.source !== 'none'
-      })
+      return providers.filter((provider) => hasProviderAuth(state, provider.id))
     },
 
-    listModels(providerId?: string): ModelDefinition[] {
-      return catalog.listModels(providerId)
+    async listModels(providerId?: string, options?: ModelListOptions): Promise<ModelDefinition[]> {
+      await ensureCatalogEnriched()
+      if (options?.includeUnavailable === true) {
+        return catalog.listModels(providerId)
+      }
+
+      const state = await getState()
+      if (providerId !== undefined) {
+        if (!hasProviderAuth(state, providerId)) {
+          return []
+        }
+        return catalog.listModels(providerId)
+      }
+
+      const providers = catalog.listProviders().filter((provider) => hasProviderAuth(state, provider.id))
+      const results: ModelDefinition[] = []
+      for (const provider of providers) {
+        results.push(...catalog.listModels(provider.id))
+      }
+      return results
     },
 
-    getModel(providerId: string, modelId: string): ModelDefinition | undefined {
+    async getModel(
+      providerId: string,
+      modelId: string,
+      options?: GetModelOptions
+    ): Promise<ModelDefinition | undefined> {
+      await ensureCatalogEnriched()
+      if (options?.includeUnavailable !== true) {
+        const state = await getState()
+        if (!hasProviderAuth(state, providerId)) {
+          return undefined
+        }
+      }
       return catalog.getModel(providerId, modelId)
     },
   }

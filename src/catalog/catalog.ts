@@ -3,7 +3,7 @@ import type { ModelDefinition } from '../types/model.js'
 import { mapModelsDevProvider, mapModelsDevProviderMetadata } from './mapper.js'
 import { mergeCatalogData, mergeModelDefinitions } from './merger.js'
 
-const DEFAULT_REMOTE_URL = 'https://models.dev/api/v1/providers'
+const DEFAULT_REMOTE_URL = 'https://models.dev/api.json'
 const DEFAULT_TIMEOUT_MS = 10_000
 
 const log = createLogger('catalog')
@@ -134,7 +134,7 @@ export class Catalog {
   extend(config: ExtendConfig): void {
     if (!config.providers) return
 
-    for (const [providerId, providerConfig] of Object.entries(config.providers)) {      
+    for (const [providerId, providerConfig] of Object.entries(config.providers)) {
       const existingProvider = this.providers.get(providerId)
       const provider: CatalogProvider = {
         id: providerId,
