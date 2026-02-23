@@ -95,7 +95,11 @@ export async function buildProviderState(config: {
       if (typeof pluginKey === 'string') {
         key = pluginKey
         source = 'plugin'
-        // Plugin wraps the auth — keep the original location for tracing
+      }
+      // Resolve actual auth credential to track correct location
+      const resolvedAuth = await getAuth()
+      if (resolvedAuth.location) {
+        location = resolvedAuth.location
       }
     }
 

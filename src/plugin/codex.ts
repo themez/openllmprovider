@@ -7,8 +7,11 @@ const OAUTH_DUMMY_KEY = 'codex-oauth-placeholder'
 const CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann'
 const ISSUER = 'https://auth.openai.com'
 const OPENAI_TOKEN_URL = `${ISSUER}/oauth/token`
-const OPENAI_DEVICE_URL = `${ISSUER}/oauth/device/code`
+const OPENAI_DEVICE_USERCODE_URL = `${ISSUER}/api/accounts/deviceauth/usercode`
+const OPENAI_DEVICE_TOKEN_URL = `${ISSUER}/api/accounts/deviceauth/token`
+const OPENAI_DEVICE_VERIFY_URL = `${ISSUER}/codex/device`
 const CODEX_API_ENDPOINT = 'https://chatgpt.com/backend-api/codex/responses'
+const DEVICE_USER_AGENT = 'openllmprovider/codex-auth'
 
 interface TokenResponse {
   access_token: string
@@ -64,45 +67,147 @@ function extractAccountIdFromJwt(token: string): string | undefined {
   return undefined
 }
 
-/**
- * Poll the token endpoint until the device flow completes or times out.
- * Max ~10 minutes at 5-second polling intervals.
- */
-async function pollForToken(deviceCode: string, intervalSeconds: number): Promise<TokenResponse> {
-  const intervalMs = Math.max(intervalSeconds, 5) * 1000
+interface DeviceAuthStartResponse {
+  device_auth_id: string
+  user_code: string
+  interval?: string | number
+}
+
+interface DeviceAuthTokenResponse {
+  authorization_code: string
+  code_verifier: string
+}
+
+function extractApiErrorMessage(rawBody: string): string {
+  try {
+    const parsed = JSON.parse(rawBody) as Record<string, unknown>
+    const direct = parsed.message
+    if (typeof direct === 'string' && direct.length > 0) {
+      return direct
+    }
+    const nested = parsed.error
+    if (nested !== null && typeof nested === 'object' && !Array.isArray(nested)) {
+      const msg = (nested as Record<string, unknown>).message
+      if (typeof msg === 'string' && msg.length > 0) {
+        return msg
+      }
+    }
+  } catch {
+    return rawBody
+  }
+  return rawBody
+}
+
+function isDeviceAuthSecurityGate(message: string): boolean {
+  const text = message.toLowerCase()
+  return (
+    text.includes('enable device code authorization for codex') ||
+    text.includes('chatgpt security settings') ||
+    text.includes('device code authorization')
+  )
+}
+
+async function startDeviceAuth(): Promise<DeviceAuthStartResponse> {
+  const res = await globalThis.fetch(OPENAI_DEVICE_USERCODE_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'User-Agent': DEVICE_USER_AGENT,
+    },
+    body: JSON.stringify({ client_id: CLIENT_ID }),
+  })
+
+  if (!res.ok) {
+    const body = await res.text()
+    throw new Error(`Device auth start failed: ${res.status} ${res.statusText} ${body}`)
+  }
+
+  const raw = (await res.json()) as Record<string, unknown>
+  return {
+    device_auth_id: String(raw.device_auth_id ?? ''),
+    user_code: String(raw.user_code ?? ''),
+    interval: typeof raw.interval === 'string' || typeof raw.interval === 'number' ? raw.interval : undefined,
+  }
+}
+
+async function pollDeviceAuthorizationCode(
+  deviceAuthId: string,
+  userCode: string,
+  intervalSeconds: number
+): Promise<DeviceAuthTokenResponse> {
+  const intervalMs = Math.max(intervalSeconds, 1) * 1000
   const maxPolls = 120
 
   for (let i = 0; i < maxPolls; i++) {
-    await new Promise<void>((resolve) => setTimeout(resolve, intervalMs))
+    await new Promise<void>((resolve) => setTimeout(resolve, intervalMs + 3000))
 
-    const body = new URLSearchParams({
-      client_id: CLIENT_ID,
-      device_code: deviceCode,
-      grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
-    })
-
-    const res = await globalThis.fetch(OPENAI_TOKEN_URL, {
+    const res = await globalThis.fetch(OPENAI_DEVICE_TOKEN_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: body.toString(),
+      headers: {
+        'Content-Type': 'application/json',
+        'User-Agent': DEVICE_USER_AGENT,
+      },
+      body: JSON.stringify({
+        device_auth_id: deviceAuthId,
+        user_code: userCode,
+      }),
     })
 
-    const raw = (await res.json()) as Record<string, unknown>
-
-    if (typeof raw.error === 'string') {
-      if (raw.error === 'authorization_pending' || raw.error === 'slow_down') {
-        log('poll[%d]: %s, waiting...', i + 1, raw.error)
-        continue
+    if (res.ok) {
+      const raw = (await res.json()) as Record<string, unknown>
+      const authorizationCode = String(raw.authorization_code ?? '')
+      const codeVerifier = String(raw.code_verifier ?? '')
+      if (!authorizationCode || !codeVerifier) {
+        throw new Error('Device auth token response missing authorization_code/code_verifier')
       }
-      const desc = typeof raw.error_description === 'string' ? raw.error_description : ''
-      throw new Error(`Device flow error: ${raw.error} — ${desc}`)
+      log('poll[%d]: authorization code acquired', i + 1)
+      return { authorization_code: authorizationCode, code_verifier: codeVerifier }
     }
 
-    log('poll[%d]: token acquired', i + 1)
-    return parseTokenResponse(raw)
+    if (res.status === 403 || res.status === 404) {
+      if (res.status === 403) {
+        const body = await res.text()
+        const message = extractApiErrorMessage(body)
+        if (isDeviceAuthSecurityGate(message)) {
+          throw new Error(message)
+        }
+      }
+      log('poll[%d]: pending (%d)', i + 1, res.status)
+      continue
+    }
+
+    const body = await res.text()
+    throw new Error(`Device auth poll failed: ${res.status} ${res.statusText} ${body}`)
   }
 
   throw new Error('Device flow timed out after polling limit reached')
+}
+
+async function exchangeAuthorizationCodeForTokens(
+  authorizationCode: string,
+  codeVerifier: string
+): Promise<TokenResponse> {
+  const body = new URLSearchParams({
+    grant_type: 'authorization_code',
+    code: authorizationCode,
+    redirect_uri: `${ISSUER}/deviceauth/callback`,
+    client_id: CLIENT_ID,
+    code_verifier: codeVerifier,
+  })
+
+  const res = await globalThis.fetch(OPENAI_TOKEN_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: body.toString(),
+  })
+
+  if (!res.ok) {
+    const rawBody = await res.text()
+    throw new Error(`Token exchange failed: ${res.status} ${res.statusText} ${rawBody}`)
+  }
+
+  const raw = (await res.json()) as Record<string, unknown>
+  return parseTokenResponse(raw)
 }
 
 /**
@@ -317,31 +422,16 @@ export const codexPlugin: AuthHook = {
       async handler(): Promise<AuthCredential> {
         log('starting OpenAI device flow')
 
-        const body = new URLSearchParams({
-          client_id: CLIENT_ID,
-          scope: 'openid profile email offline_access',
-        })
-
-        const deviceRes = await globalThis.fetch(OPENAI_DEVICE_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: body.toString(),
-        })
-
-        if (!deviceRes.ok) {
-          throw new Error(`Device code request failed: ${deviceRes.status} ${deviceRes.statusText}`)
-        }
-
-        const deviceRaw = (await deviceRes.json()) as Record<string, unknown>
-        const deviceCode = String(deviceRaw.device_code ?? '')
-        const userCode = String(deviceRaw.user_code ?? '')
-        const verificationUri = String(deviceRaw.verification_uri_complete ?? deviceRaw.verification_uri ?? '')
-        const interval = Number(deviceRaw.interval ?? 5)
+        const deviceData = await startDeviceAuth()
+        const interval = Number(deviceData.interval ?? 5)
+        const verificationUri = OPENAI_DEVICE_VERIFY_URL
+        const userCode = deviceData.user_code
 
         log('device flow: user_code=%s', userCode)
         log('device flow: verify at %s', verificationUri)
 
-        const tokens = await pollForToken(deviceCode, interval)
+        const authCode = await pollDeviceAuthorizationCode(deviceData.device_auth_id, userCode, interval)
+        const tokens = await exchangeAuthorizationCodeForTokens(authCode.authorization_code, authCode.code_verifier)
 
         return {
           type: 'oauth',

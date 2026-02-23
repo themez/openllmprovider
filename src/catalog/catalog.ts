@@ -134,9 +134,7 @@ export class Catalog {
   extend(config: ExtendConfig): void {
     if (!config.providers) return
 
-    for (const [providerId, providerConfig] of Object.entries(config.providers)) {
-      log('extend: registering provider %s', providerId)
-
+    for (const [providerId, providerConfig] of Object.entries(config.providers)) {      
       const existingProvider = this.providers.get(providerId)
       const provider: CatalogProvider = {
         id: providerId,
