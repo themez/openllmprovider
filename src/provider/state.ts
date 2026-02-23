@@ -21,12 +21,8 @@ async function resolveSecretRef(ref: SecretRef): Promise<string | undefined> {
   return undefined
 }
 
-// Providers whose SDK sends x-goog-api-key header; OAuth tokens need Bearer auth instead
-const BEARER_FETCH_PROVIDERS = new Set(['@ai-sdk/google', '@ai-sdk/google-vertex'])
-
-function needsBearerFetch(bundledProvider?: string): boolean {
-  return bundledProvider !== undefined && BEARER_FETCH_PROVIDERS.has(bundledProvider)
-}
+const GOOGLE_PROVIDERS = new Set(['@ai-sdk/google', '@ai-sdk/google-vertex'])
+const AUTH_TOKEN_PROVIDERS = new Set(['@ai-sdk/anthropic'])
 
 export async function buildProviderState(config: {
   catalog: Catalog
@@ -70,22 +66,34 @@ export async function buildProviderState(config: {
     if (authCred?.key !== undefined) {
       key = authCred.key
       source = 'auth'
-      if (authCred.type === 'oauth' && needsBearerFetch(catalogProvider.bundledProvider)) {
-        // Google SDK sends x-goog-api-key but OAuth tokens need Authorization: Bearer
-        const token = authCred.key
-        options.fetch = (url: string | URL | Request, init?: RequestInit) => {
-          const h = new Headers(init?.headers)
-          h.delete('x-goog-api-key')
-          h.set('Authorization', `Bearer ${token}`)
-          return globalThis.fetch(url, { ...init, headers: h })
+      const bp = catalogProvider.bundledProvider
+      if (authCred.type === 'oauth' && bp !== undefined) {
+        if (GOOGLE_PROVIDERS.has(bp)) {
+          const token = authCred.key
+          options.fetch = (url: string | URL | Request, init?: RequestInit) => {
+            const h = new Headers(init?.headers)
+            h.delete('x-goog-api-key')
+            h.set('Authorization', `Bearer ${token}`)
+            return globalThis.fetch(url, { ...init, headers: h })
+          }
+          log('%s: resolved OAuth token (Google Bearer fetch override)', pid)
+        } else if (AUTH_TOKEN_PROVIDERS.has(bp)) {
+          options.authToken = authCred.key
+          options.apiKey = undefined
+          key = undefined
+          log('%s: resolved OAuth token (authToken for Bearer auth)', pid)
+        } else {
+          log('%s: resolved OAuth token as apiKey (type=%s)', pid, authCred.type)
         }
-        log('%s: resolved OAuth token (Bearer fetch override)', pid)
       } else {
         log('%s: resolved key from auth (type=%s)', pid, authCred.type ?? 'api')
       }
     }
 
-    const getAuth = async () => authCred ?? { type: 'api' as const }
+    const getAuth = async () => {
+      const preferred = await authStore.getPreferred?.(pid, 'oauth')
+      return preferred ?? authCred ?? { type: 'api' as const }
+    }
     const pluginOpts = await loadPluginOptions(pid, getAuth, { id: pid, name: catalogProvider.name })
     if (pluginOpts !== undefined) {
       Object.assign(options, pluginOpts)
