@@ -1,20 +1,30 @@
 import type { Catalog, CatalogProvider } from '../catalog/index.js'
 import { createLogger } from '../logger.js'
 import type { AuthCredential } from '../types/plugin.js'
+import type { DiskScanner, ScanContext } from './scanners.js'
+import { DEFAULT_SCANNERS, runDiskScanners } from './scanners.js'
 import type { AuthStore } from './store.js'
 
 const log = createLogger('auth:discover')
 
 export interface DiscoveredCredential {
   providerId: string
-  source: 'env' | 'auth'
+  source: 'env' | 'disk' | 'auth'
   key?: string
   credential?: AuthCredential
+  location?: string
+}
+
+export interface DiscoverOptions {
+  scanners?: DiskScanner[]
+  scanContext?: ScanContext
+  skipDiskScan?: boolean
 }
 
 export async function discoverCredentials(
   catalog: Catalog,
-  authStore: AuthStore
+  authStore: AuthStore,
+  options?: DiscoverOptions
 ): Promise<Record<string, DiscoveredCredential>> {
   const result: Record<string, DiscoveredCredential> = {}
 
@@ -30,6 +40,24 @@ export async function discoverCredentials(
         key: envKey,
       }
       log('discovered %s via env var', provider.id)
+    }
+  }
+
+  if (!options?.skipDiskScan) {
+    const scanners = options?.scanners ?? DEFAULT_SCANNERS
+    const diskResults = await runDiskScanners(scanners, options?.scanContext)
+    log('disk scan found %d results', diskResults.length)
+
+    for (const diskResult of diskResults) {
+      if (!result[diskResult.providerId]) {
+        result[diskResult.providerId] = {
+          providerId: diskResult.providerId,
+          source: 'disk',
+          key: diskResult.key,
+          location: diskResult.source,
+        }
+        log('discovered %s via disk (%s)', diskResult.providerId, diskResult.source)
+      }
     }
   }
 

@@ -15,8 +15,23 @@ export type {
 } from './catalog/index.js'
 
 // Auth
-export { createAuthStore, createSecretResolver, discoverCredentials } from './auth/index.js'
-export type { AuthStore, AuthStoreOptions, DiscoveredCredential } from './auth/index.js'
+export {
+  createAuthStore,
+  createSecretResolver,
+  discoverCredentials,
+  DEFAULT_SCANNERS,
+  createNodeScanContext,
+  runDiskScanners,
+} from './auth/index.js'
+export type {
+  AuthStore,
+  AuthStoreOptions,
+  DiscoveredCredential,
+  DiscoverOptions,
+  DiskScanner,
+  DiskScanResult,
+  ScanContext,
+} from './auth/index.js'
 
 // Plugin
 export { registerPlugin, getPlugins, getPluginForProvider, loadPluginOptions } from './plugin/index.js'

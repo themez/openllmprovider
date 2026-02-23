@@ -11,7 +11,7 @@ export interface ProviderState {
   id: string
   key?: string
   options: Record<string, unknown>
-  source: 'env' | 'auth' | 'plugin' | 'config' | 'none'
+  source: 'env' | 'disk' | 'auth' | 'plugin' | 'config' | 'none'
 }
 
 async function resolveSecretRef(ref: SecretRef): Promise<string | undefined> {
