@@ -10,6 +10,7 @@ export interface DiskScanResult {
   providerId: string
   source: string
   key?: string
+  credentialType?: 'api' | 'oauth' | 'wellknown'
 }
 
 export interface DiskScanner {
@@ -258,9 +259,10 @@ const opencodeAuthScanner: DiskScanner = {
         const type = typed.type
         if (type !== 'api' && type !== 'oauth' && type !== 'wellknown') continue
 
-        const key = typeof typed.key === 'string' ? typed.key : undefined
+        const key =
+          typeof typed.key === 'string' ? typed.key : typeof typed.access === 'string' ? typed.access : undefined
         log('opencode-auth: found %s (%s) in %s', providerId, type, path)
-        results.push({ providerId, source: path, key })
+        results.push({ providerId, source: path, key, credentialType: type as DiskScanResult['credentialType'] })
       }
 
       if (results.length > 0) return results

@@ -1,5 +1,7 @@
 import { createLogger } from '../logger.js'
 import type { AuthCredential } from '../types/plugin.js'
+import type { DiskScanner, ScanContext } from './scanners.js'
+import { DEFAULT_SCANNERS, createNodeScanContext, runDiskScanners } from './scanners.js'
 
 const log = createLogger('auth')
 
@@ -42,6 +44,21 @@ function isEnoent(err: unknown): boolean {
   return typeof err === 'object' && err !== null && (err as { code?: string }).code === 'ENOENT'
 }
 
+export interface DiscoveredCredential {
+  providerId: string
+  source: 'env' | 'disk' | 'auth'
+  key?: string
+  credential?: AuthCredential
+  location?: string
+}
+
+export interface DiscoverOptions {
+  scanners?: DiskScanner[]
+  scanContext?: ScanContext
+  skipDiskScan?: boolean
+  skipEnvScan?: boolean
+}
+
 export interface AuthStoreOptions {
   path?: string
   data?: Record<string, AuthCredential>
@@ -52,11 +69,13 @@ export interface AuthStore {
   get(providerId: string): Promise<AuthCredential | null>
   set(providerId: string, credential: AuthCredential): Promise<void>
   remove(providerId: string): Promise<void>
+  discover(options?: DiscoverOptions): Promise<DiscoveredCredential[]>
 }
 
 export function createAuthStore(options?: AuthStoreOptions): AuthStore {
   const externalData = options?.data
   const filePath = options?.path ?? getDefaultAuthPath()
+  const discoveredCredentials = new Map<string, AuthCredential>()
 
   log('auth store created, path=%s, external=%s', filePath, externalData !== undefined)
 
@@ -116,13 +135,29 @@ export function createAuthStore(options?: AuthStoreOptions): AuthStore {
     log('wrote auth.json with %d entries', Object.keys(data).length)
   }
 
+  function mergeWithDiscovered(fileData: Record<string, AuthCredential>): Record<string, AuthCredential> {
+    if (discoveredCredentials.size === 0) return fileData
+    const merged = { ...fileData }
+    for (const [pid, cred] of discoveredCredentials) {
+      if (merged[pid] === undefined) {
+        merged[pid] = cred
+      }
+    }
+    log(
+      'merged %d discovered credentials with %d file entries',
+      discoveredCredentials.size,
+      Object.keys(fileData).length
+    )
+    return merged
+  }
+
   return {
     async all(): Promise<Record<string, AuthCredential>> {
-      return readFile()
+      return mergeWithDiscovered(await readFile())
     },
 
     async get(providerId: string): Promise<AuthCredential | null> {
-      const store = await readFile()
+      const store = mergeWithDiscovered(await readFile())
       const credential = store[providerId]
       if (credential === undefined) {
         log('get(%s): not found', providerId)
@@ -149,5 +184,80 @@ export function createAuthStore(options?: AuthStoreOptions): AuthStore {
       await writeFile(store)
       log('remove(%s): done', providerId)
     },
+
+    async discover(discoverOptions?: DiscoverOptions): Promise<DiscoveredCredential[]> {
+      const results: DiscoveredCredential[] = []
+      const seen = new Set<string>()
+
+      if (!discoverOptions?.skipEnvScan) {
+        for (const [envVar, providerId] of ENV_HINTS) {
+          const value = process.env[envVar]
+          if (value) {
+            seen.add(providerId)
+            discoveredCredentials.set(providerId, { type: 'api', key: value })
+            results.push({ providerId, source: 'env', key: value })
+            log('discover: %s via env (%s)', providerId, envVar)
+          }
+        }
+      }
+
+      if (!discoverOptions?.skipDiskScan) {
+        const scanners = discoverOptions?.scanners ?? DEFAULT_SCANNERS
+        const ctx = discoverOptions?.scanContext ?? createNodeScanContext()
+        const diskResults = await runDiskScanners(scanners, ctx)
+        log('discover: disk scan found %d results', diskResults.length)
+
+        for (const disk of diskResults) {
+          const credType = disk.credentialType ?? 'api'
+          if (!seen.has(disk.providerId)) {
+            seen.add(disk.providerId)
+            results.push({
+              providerId: disk.providerId,
+              source: 'disk',
+              key: disk.key,
+              location: disk.source,
+            })
+            if (disk.key !== undefined) {
+              discoveredCredentials.set(disk.providerId, { type: credType, key: disk.key })
+            }
+            log('discover: %s via disk (%s), hasKey=%s', disk.providerId, disk.source, disk.key !== undefined)
+          } else if (disk.key !== undefined && !discoveredCredentials.has(disk.providerId)) {
+            // Earlier scanner found this provider without a key; upgrade with this key
+            discoveredCredentials.set(disk.providerId, { type: credType, key: disk.key })
+            log('discover: %s upgraded with key from %s', disk.providerId, disk.source)
+          }
+        }
+      }
+      let authData: Record<string, AuthCredential>
+      try {
+        authData = await readFile()
+      } catch (err: unknown) {
+        log('discover: failed to read auth.json: %s', err instanceof Error ? err.message : String(err))
+        authData = {}
+      }
+
+      for (const [providerId, credential] of Object.entries(authData)) {
+        if (!seen.has(providerId)) {
+          seen.add(providerId)
+          results.push({ providerId, source: 'auth', credential })
+          log('discover: %s via auth.json', providerId)
+        }
+      }
+
+      log('discover: complete, %d providers found', results.length)
+      return results
+    },
   }
 }
+
+const ENV_HINTS: Array<[string, string]> = [
+  ['ANTHROPIC_API_KEY', 'anthropic'],
+  ['OPENAI_API_KEY', 'openai'],
+  ['GOOGLE_GENERATIVE_AI_API_KEY', 'google'],
+  ['GOOGLE_API_KEY', 'google'],
+  ['AZURE_API_KEY', 'azure'],
+  ['XAI_API_KEY', 'xai'],
+  ['MISTRAL_API_KEY', 'mistral'],
+  ['GROQ_API_KEY', 'groq'],
+  ['OPENROUTER_API_KEY', 'openrouter'],
+]

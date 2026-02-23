@@ -1,109 +1,90 @@
 {
-	"name": "openllmprovider",
-	"version": "2.0.0-alpha.0",
-	"description": "Control plane for AI model providers",
-	"type": "module",
-	"sideEffects": false,
-	"main": "./dist/index.cjs",
-	"module": "./dist/index.mjs",
-	"types": "./dist/index.d.mts",
-	"exports": {
-		".": {
-			"import": {
-				"types": "./dist/index.d.mts",
-				"default": "./dist/index.mjs"
-			},
-			"require": {
-				"types": "./dist/index.d.cts",
-				"default": "./dist/index.cjs"
-			}
-		},
-		"./catalog": {
-			"import": {
-				"types": "./dist/catalog/index.d.mts",
-				"default": "./dist/catalog/index.mjs"
-			},
-			"require": {
-				"types": "./dist/catalog/index.d.cts",
-				"default": "./dist/catalog/index.cjs"
-			}
-		},
-		"./auth": {
-			"import": {
-				"types": "./dist/auth/index.d.mts",
-				"default": "./dist/auth/index.mjs"
-			},
-			"require": {
-				"types": "./dist/auth/index.d.cts",
-				"default": "./dist/auth/index.cjs"
-			}
-		},
-		"./storage": {
-			"import": {
-				"types": "./dist/storage/index.d.mts",
-				"default": "./dist/storage/index.mjs"
-			},
-			"require": {
-				"types": "./dist/storage/index.d.cts",
-				"default": "./dist/storage/index.cjs"
-			}
-		},
-		"./plugin": {
-			"import": {
-				"types": "./dist/plugin/index.d.mts",
-				"default": "./dist/plugin/index.mjs"
-			},
-			"require": {
-				"types": "./dist/plugin/index.d.cts",
-				"default": "./dist/plugin/index.cjs"
-			}
-		}
-	},
-	"files": [
-		"dist",
-		"README.md"
-	],
-	"scripts": {
-		"build": "tsdown",
-		"dev": "tsdown --watch",
-		"type-check": "tsc --noEmit",
-		"lint": "biome check .",
-		"format": "biome format --write ."
-	},
-	"keywords": [
-		"ai",
-		"llm",
-		"provider",
-		"registry",
-		"control-plane"
-	],
-	"author": "Chatbox Team",
-	"license": "MIT",
-	"peerDependencies": {
-		"zod": ">=3.20.0"
-	},
-	"dependencies": {
-		"@ai-sdk/amazon-bedrock": "latest",
-		"@ai-sdk/anthropic": "latest",
-		"@ai-sdk/azure": "latest",
-		"@ai-sdk/google": "latest",
-		"@ai-sdk/google-vertex": "latest",
-		"@ai-sdk/groq": "latest",
-		"@ai-sdk/mistral": "latest",
-		"@ai-sdk/openai": "latest",
-		"@ai-sdk/openai-compatible": "latest",
-		"@ai-sdk/xai": "latest",
-		"@openrouter/ai-sdk-provider": "latest",
-		"debug": "latest"
-	},
-	"devDependencies": {
-		"@ai-sdk/provider": "latest",
-		"@biomejs/biome": "^1.9.0",
-		"@types/debug": "latest",
-		"@types/node": "^25.3.0",
-		"tsdown": "^0.20.0",
-		"tsx": "^4.21.0",
-		"typescript": "^5.6.0",
-		"zod": "^3.23.0"
-	}
+  "name": "openllmprovider",
+  "version": "2.0.0-alpha.0",
+  "description": "Control plane for AI model providers",
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.mts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.mts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./auth": {
+      "import": {
+        "types": "./dist/auth/index.d.mts",
+        "default": "./dist/auth/index.mjs"
+      },
+      "require": {
+        "types": "./dist/auth/index.d.cts",
+        "default": "./dist/auth/index.cjs"
+      }
+    },
+    "./storage": {
+      "import": {
+        "types": "./dist/storage/index.d.mts",
+        "default": "./dist/storage/index.mjs"
+      },
+      "require": {
+        "types": "./dist/storage/index.d.cts",
+        "default": "./dist/storage/index.cjs"
+      }
+    },
+    "./plugin": {
+      "import": {
+        "types": "./dist/plugin/index.d.mts",
+        "default": "./dist/plugin/index.mjs"
+      },
+      "require": {
+        "types": "./dist/plugin/index.d.cts",
+        "default": "./dist/plugin/index.cjs"
+      }
+    }
+  },
+  "files": ["dist", "README.md"],
+  "scripts": {
+    "build": "tsdown",
+    "dev": "tsdown --watch",
+    "type-check": "tsc --noEmit",
+    "lint": "biome check .",
+    "format": "biome format --write ."
+  },
+  "keywords": ["ai", "llm", "provider", "registry", "control-plane"],
+  "author": "Chatbox Team",
+  "license": "MIT",
+  "peerDependencies": {
+    "zod": ">=3.20.0"
+  },
+  "dependencies": {
+    "@ai-sdk/amazon-bedrock": "latest",
+    "@ai-sdk/anthropic": "latest",
+    "@ai-sdk/azure": "latest",
+    "@ai-sdk/google": "latest",
+    "@ai-sdk/google-vertex": "latest",
+    "@ai-sdk/groq": "latest",
+    "@ai-sdk/mistral": "latest",
+    "@ai-sdk/openai": "latest",
+    "@ai-sdk/openai-compatible": "latest",
+    "@ai-sdk/xai": "latest",
+    "@openrouter/ai-sdk-provider": "latest",
+    "debug": "latest"
+  },
+  "devDependencies": {
+    "@ai-sdk/provider": "latest",
+    "@biomejs/biome": "^1.9.0",
+    "@types/debug": "latest",
+    "@types/node": "^25.3.0",
+    "tsdown": "^0.20.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.6.0",
+    "zod": "^3.23.0"
+  }
 }

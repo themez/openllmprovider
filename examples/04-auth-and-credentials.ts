@@ -1,47 +1,23 @@
-/**
- * Auth Store & Credential Discovery
- *
- * Demonstrates the credential resolution chain:
- *   env vars → auth.json → user config
- *
- * The auth store persists credentials to ~/.local/share/openllmprovider/auth.json
- * (or XDG_DATA_HOME). You can also use in-memory data for testing.
- *
- * Run: OPENAI_API_KEY=sk-xxx npx tsx examples/04-auth-and-credentials.ts
- */
-import { createAuthStore, createCatalog, createProvider, discoverCredentials } from 'openllmprovider'
+import { createAuthStore, createProviderStore } from 'openllmprovider'
 
-// --- In-memory auth store (for testing) ---
 const authStore = createAuthStore({
   data: {
     anthropic: { type: 'api', key: 'sk-ant-test-key' },
   },
 })
 
-// Read back
 const cred = await authStore.get('anthropic')
 console.log('Stored credential:', cred)
 
-// --- Credential discovery ---
-const catalog = createCatalog()
-const discovered = await discoverCredentials(catalog, authStore)
-
-for (const [providerId, info] of Object.entries(discovered)) {
-  console.log(`Discovered: ${providerId} via ${info.source}`)
+const discovered = await authStore.discover()
+for (const info of discovered) {
+  console.log(`Discovered: ${info.providerId} via ${info.source}`)
 }
 
-// --- User config with SecretRef ---
-// Override provider credentials via config (supports env/plain/storage refs)
-const provider = createProvider({
-  catalog,
-  authStore,
+const providerStore = createProviderStore(authStore, {
   userConfig: {
-    openai: {
-      apiKey: { type: 'env', name: 'OPENAI_API_KEY' },
-    },
-    anthropic: {
-      apiKey: 'sk-ant-hardcoded-key', // string shorthand for { type: 'plain', value: '...' }
-    },
+    openai: { apiKey: { type: 'env', name: 'OPENAI_API_KEY' } },
+    anthropic: { apiKey: 'sk-ant-hardcoded-key' },
     groq: {
       apiKey: { type: 'env', name: 'GROQ_API_KEY' },
       baseURL: 'https://api.groq.com/openai/v1',
@@ -49,9 +25,7 @@ const provider = createProvider({
   },
 })
 
-const state = await provider.getState()
-for (const [id, s] of Object.entries(state)) {
-  if (s.source !== 'none') {
-    console.log(`  ${id}: source=${s.source}`)
-  }
+const providers = await providerStore.listProviders()
+for (const p of providers) {
+  console.log(`  ${p.id}: ${p.name}`)
 }
