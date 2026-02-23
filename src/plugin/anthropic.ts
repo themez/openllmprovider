@@ -157,7 +157,6 @@ export const anthropicPlugin: AuthHook = {
     if (auth.type !== 'oauth') return {}
 
     return {
-      apiKey: 'anthropic-oauth-placeholder',
       headers: {
         'anthropic-beta': OAUTH_BETA,
       },

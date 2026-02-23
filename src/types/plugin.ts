@@ -9,6 +9,9 @@ export interface AuthCredential {
   refresh?: string
   access?: string
   expires?: number
+  baseURL?: string
+  apiHost?: string
+  host?: string
   location?: string
   [key: string]: unknown
 }

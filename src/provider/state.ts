@@ -25,6 +25,29 @@ async function resolveSecretRef(ref: SecretRef): Promise<string | undefined> {
 const GOOGLE_PROVIDERS = new Set(['@ai-sdk/google', '@ai-sdk/google-vertex'])
 const AUTH_TOKEN_PROVIDERS = new Set(['@ai-sdk/anthropic'])
 
+function normalizeProviderBaseURL(providerId: string, baseURL: string): string {
+  if (providerId !== 'openai') return baseURL
+
+  try {
+    const parsed = new URL(baseURL)
+    const path = parsed.pathname.replace(/\/+$/, '')
+    if (path === '' || path === '/') {
+      parsed.pathname = '/v1'
+    }
+    return parsed.toString().replace(/\/$/, '')
+  } catch {
+    return baseURL
+  }
+}
+
+function resolveAuthBaseURL(authCred: Record<string, unknown> | undefined): string | undefined {
+  if (authCred === undefined) return undefined
+  if (typeof authCred.baseURL === 'string' && authCred.baseURL.trim().length > 0) return authCred.baseURL.trim()
+  if (typeof authCred.apiHost === 'string' && authCred.apiHost.trim().length > 0) return authCred.apiHost.trim()
+  if (typeof authCred.host === 'string' && authCred.host.trim().length > 0) return authCred.host.trim()
+  return undefined
+}
+
 export async function buildProviderState(config: {
   catalog: Catalog
   authStore: AuthStore
@@ -47,7 +70,9 @@ export async function buildProviderState(config: {
     let key: string | undefined
     let source: ProviderState['source'] = 'none'
     let location: string | undefined
-    if (catalogProvider.baseURL !== undefined) options.baseURL = catalogProvider.baseURL
+    if (catalogProvider.baseURL !== undefined) {
+      options.baseURL = normalizeProviderBaseURL(pid, catalogProvider.baseURL)
+    }
     if (catalogProvider.headers !== undefined) options.headers = { ...catalogProvider.headers }
     if (catalogProvider.options !== undefined) Object.assign(options, catalogProvider.options)
     if (catalogProvider.env !== undefined) {
@@ -62,6 +87,10 @@ export async function buildProviderState(config: {
       }
     }
     const authCred = authCredentials[pid]
+    const authBaseURL = resolveAuthBaseURL(authCred as Record<string, unknown> | undefined)
+    if (authBaseURL !== undefined) {
+      options.baseURL = normalizeProviderBaseURL(pid, authBaseURL)
+    }
     if (authCred?.key !== undefined) {
       key = authCred.key
       source = 'auth'
@@ -105,7 +134,7 @@ export async function buildProviderState(config: {
 
     const userCfg = userConfig?.[pid]
     if (userCfg !== undefined) {
-      if (userCfg.baseURL !== undefined) options.baseURL = userCfg.baseURL
+      if (userCfg.baseURL !== undefined) options.baseURL = normalizeProviderBaseURL(pid, userCfg.baseURL)
       if (userCfg.headers !== undefined) {
         const existingHeaders = options.headers
         options.headers = {
