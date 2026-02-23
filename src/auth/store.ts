@@ -1,7 +1,7 @@
 import { createLogger } from '../logger.js'
 import { type StorageAdapter, createDefaultStorage } from '../storage/index.js'
 import type { AuthCredential } from '../types/plugin.js'
-import type { DiskScanner, ScanContext } from './scanners.js'
+import type { DiskScanResult, DiskScanner, ScanContext } from './scanners.js'
 import { DEFAULT_SCANNERS, createNodeScanContext, runDiskScanners } from './scanners.js'
 
 const log = createLogger('auth')
@@ -19,6 +19,7 @@ export interface DiscoverOptions {
   scanContext?: ScanContext
   skipDiskScan?: boolean
   skipEnvScan?: boolean
+  persist?: boolean
 }
 
 export interface AuthStoreOptions {
@@ -76,8 +77,10 @@ export function createAuthStore(options?: AuthStoreOptions): AuthStore {
       log('auth store payload is malformed, returning empty store')
       return {}
     }
-    log('read auth store with %d entries', Object.keys(parsed).length)
-    return parsed as Record<string, AuthCredential>
+
+    const normalized = normalizeAuthState(parsed as Record<string, unknown>)
+    log('read auth store with %d entries', Object.keys(normalized).length)
+    return normalized
   }
 
   async function writeAuthState(data: Record<string, AuthCredential>): Promise<void> {
@@ -118,6 +121,39 @@ export function createAuthStore(options?: AuthStoreOptions): AuthStore {
       Object.keys(fileData).length
     )
     return merged
+  }
+
+  function pushDiscoveredCredential(providerId: string, credential: AuthCredential): void {
+    const arr = discoveredCredentials.get(providerId) ?? []
+    arr.push(credential)
+    discoveredCredentials.set(providerId, arr)
+  }
+
+  function pushDiscoveredResultOnce(
+    seen: Set<string>,
+    results: DiscoveredCredential[],
+    result: DiscoveredCredential
+  ): boolean {
+    if (seen.has(result.providerId)) return false
+    seen.add(result.providerId)
+    results.push(result)
+    return true
+  }
+
+  function buildCredentialFromEnv(envVar: string, key: string): AuthCredential {
+    return buildCredential({ type: 'api', key, location: `env:${envVar}` })
+  }
+
+  function buildCredentialFromDisk(result: DiskScanResult): AuthCredential | undefined {
+    if (result.key === undefined) return undefined
+    return buildCredential({
+      type: result.credentialType ?? 'api',
+      key: result.key,
+      location: result.source,
+      refresh: result.refresh,
+      accountId: result.accountId,
+      expires: result.expires,
+    })
   }
 
   return {
@@ -162,11 +198,8 @@ export function createAuthStore(options?: AuthStoreOptions): AuthStore {
         for (const [envVar, providerId] of ENV_HINTS) {
           const value = process.env[envVar]
           if (value) {
-            seen.add(providerId)
-            const arr = discoveredCredentials.get(providerId) ?? []
-            arr.push({ type: 'api', key: value, location: `env:${envVar}` })
-            discoveredCredentials.set(providerId, arr)
-            results.push({ providerId, source: 'env', key: value })
+            pushDiscoveredCredential(providerId, buildCredentialFromEnv(envVar, value))
+            pushDiscoveredResultOnce(seen, results, { providerId, source: 'env', key: value })
             log('discover: %s [api] from env:%s', providerId, envVar)
           }
         }
@@ -179,41 +212,36 @@ export function createAuthStore(options?: AuthStoreOptions): AuthStore {
 
         for (const disk of diskResults) {
           const credType = disk.credentialType ?? 'api'
-          if (!seen.has(disk.providerId)) {
-            seen.add(disk.providerId)
-            results.push({
-              providerId: disk.providerId,
-              source: 'disk',
-              key: disk.key,
-              location: disk.source,
-            })
-          }
-          if (disk.key !== undefined) {
-            const arr = discoveredCredentials.get(disk.providerId) ?? []
-            const cred: AuthCredential = { type: credType, key: disk.key, location: disk.source }
-            if (disk.refresh) cred.refresh = disk.refresh
-            if (disk.accountId) cred.accountId = disk.accountId
-            if (disk.expires) cred.expires = disk.expires
-            arr.push(cred)
-            discoveredCredentials.set(disk.providerId, arr)
+          pushDiscoveredResultOnce(seen, results, {
+            providerId: disk.providerId,
+            source: 'disk',
+            key: disk.key,
+            location: disk.source,
+          })
+          const cred = buildCredentialFromDisk(disk)
+          if (cred !== undefined) {
+            pushDiscoveredCredential(disk.providerId, cred)
             log('discover: %s [%s] from %s', disk.providerId, credType, disk.source)
           }
         }
       }
+
+      if (discoverOptions?.persist === true) {
+        const persistedCount = await persistDiscoveredCredentials()
+        log('discover: persisted %d providers to auth store', persistedCount)
+      }
+
       let authData: Record<string, AuthCredential>
       try {
         authData = await readAuthState()
       } catch (err: unknown) {
-        log('discover: failed to read auth.json: %s', err instanceof Error ? err.message : String(err))
+        log('discover: failed to read auth store: %s', err instanceof Error ? err.message : String(err))
         authData = {}
       }
 
       for (const [providerId, credential] of Object.entries(authData)) {
-        if (!seen.has(providerId)) {
-          seen.add(providerId)
-          results.push({ providerId, source: 'auth', credential })
-          log('discover: %s via auth store', providerId)
-        }
+        const added = pushDiscoveredResultOnce(seen, results, { providerId, source: 'auth', credential })
+        if (added) log('discover: %s via auth store', providerId)
       }
 
       log('discover: complete, %d providers found', results.length)
@@ -231,9 +259,97 @@ export function createAuthStore(options?: AuthStoreOptions): AuthStore {
       return credential ?? null
     },
   }
+
+  async function persistDiscoveredCredentials(): Promise<number> {
+    if (discoveredCredentials.size === 0) return 0
+
+    const store = await readAuthState()
+    let changed = 0
+
+    for (const [providerId, creds] of discoveredCredentials) {
+      const existing = store[providerId]
+      if (existing?.key) {
+        continue
+      }
+
+      const best = pickBestCredential(creds, 'api')
+      if (best === undefined) {
+        continue
+      }
+
+      store[providerId] = best
+      changed += 1
+    }
+
+    if (changed > 0) {
+      await writeAuthState(store)
+    }
+
+    return changed
+  }
 }
 
 const AUTH_STORE_KEY = 'auth:store'
+
+interface CredentialBuildInput {
+  type: 'api' | 'oauth' | 'wellknown'
+  key?: string
+  location?: string
+  refresh?: string
+  accountId?: string
+  expires?: number
+}
+
+function buildCredential(input: CredentialBuildInput): AuthCredential {
+  const credential: AuthCredential = {
+    type: input.type,
+    key: input.key,
+    location: input.location,
+  }
+
+  if (input.refresh !== undefined) credential.refresh = input.refresh
+  if (input.accountId !== undefined) credential.accountId = input.accountId
+  if (input.expires !== undefined) credential.expires = input.expires
+
+  return credential
+}
+
+function normalizeAuthState(input: Record<string, unknown>): Record<string, AuthCredential> {
+  const normalized: Record<string, AuthCredential> = {}
+
+  for (const [providerId, rawCredential] of Object.entries(input)) {
+    const credential = normalizeCredential(rawCredential)
+    if (credential !== undefined) {
+      normalized[providerId] = credential
+    }
+  }
+
+  return normalized
+}
+
+function normalizeCredential(rawCredential: unknown): AuthCredential | undefined {
+  if (typeof rawCredential !== 'object' || rawCredential === null || Array.isArray(rawCredential)) {
+    return undefined
+  }
+
+  const typed = rawCredential as Record<string, unknown>
+  const type =
+    typed.type === 'api' || typed.type === 'oauth' || typed.type === 'wellknown' ? typed.type : ('api' as const)
+
+  const key =
+    typeof typed.key === 'string' && typed.key.length > 0
+      ? typed.key
+      : typeof typed.access === 'string' && typed.access.length > 0
+        ? typed.access
+        : undefined
+
+  const { access: _legacyAccess, ...rest } = typed
+  return {
+    ...rest,
+    type,
+    key,
+  } as AuthCredential
+}
 
 const ENV_HINTS: Array<[string, string]> = [
   ['ANTHROPIC_API_KEY', 'anthropic'],

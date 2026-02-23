@@ -10,6 +10,7 @@ const log = createLogger('plugin:anthropic')
 const CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e'
 const AUTHORIZE_URL = 'https://claude.ai/oauth/authorize'
 const TOKEN_URL = 'https://console.anthropic.com/v1/oauth/token'
+const API_KEY_EXCHANGE_URL = 'https://api.anthropic.com/api/oauth/claude_cli/create_api_key'
 const REDIRECT_URI = 'https://console.anthropic.com/oauth/code/callback'
 const OAUTH_SCOPES = 'org:create_api_key user:profile user:inference'
 const OAUTH_BETA = 'oauth-2025-04-20,claude-code-20250219,interleaved-thinking-2025-05-14'
@@ -18,6 +19,27 @@ interface TokenResponse {
   access_token: string
   refresh_token?: string
   expires_in?: number
+}
+
+interface CreateApiKeyResponse {
+  raw_key?: string
+}
+
+function isOAuthToken(value: string): boolean {
+  return value.startsWith('sk-ant-oat') || value.startsWith('sk-ant-ort')
+}
+
+function looksLikeApiKey(value: string): boolean {
+  if (isOAuthToken(value)) return false
+  return value.startsWith('sk-ant-')
+}
+
+function applyBearerHeaders(headers: Headers, token: string): void {
+  headers.delete('x-api-key')
+  headers.delete('authorization')
+  headers.delete('Authorization')
+  headers.set('Authorization', `Bearer ${token}`)
+  headers.set('anthropic-beta', OAUTH_BETA)
 }
 
 function toBase64Url(inputValue: Buffer): string {
@@ -149,6 +171,30 @@ async function refreshAccessToken(refreshToken: string): Promise<TokenResponse> 
   }
 }
 
+async function createApiKeyFromOAuthAccessToken(accessToken: string): Promise<string> {
+  const res = await globalThis.fetch(API_KEY_EXCHANGE_URL, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: '{}',
+  })
+
+  if (!res.ok) {
+    const body = await res.text()
+    throw new Error(`Anthropic API key exchange failed: ${res.status} ${res.statusText} ${body}`)
+  }
+
+  const raw = (await res.json()) as CreateApiKeyResponse
+  if (typeof raw.raw_key !== 'string' || raw.raw_key.length === 0) {
+    throw new Error('Anthropic API key exchange returned empty raw_key')
+  }
+
+  return raw.raw_key
+}
+
 export const anthropicPlugin: AuthHook = {
   provider: 'anthropic',
 
@@ -156,38 +202,37 @@ export const anthropicPlugin: AuthHook = {
     const auth = await getAuth()
     if (auth.type !== 'oauth') return {}
 
+    let token = auth.key
+    if (auth.expires !== undefined && auth.expires < Date.now() && typeof auth.refresh === 'string') {
+      try {
+        const refreshed = await refreshAccessToken(auth.refresh)
+        token = refreshed.access_token
+      } catch (error) {
+        log('anthropic token refresh failed: %s', error instanceof Error ? error.message : String(error))
+      }
+    }
+
+    if (typeof token === 'string' && token.length > 0) {
+      if (looksLikeApiKey(token)) {
+        return { apiKey: token }
+      }
+
+      try {
+        const apiKey = await createApiKeyFromOAuthAccessToken(token)
+        return { apiKey }
+      } catch (error) {
+        log('anthropic api key exchange failed, using oauth bearer fallback: %s', String(error))
+      }
+    }
+
     return {
       headers: {
         'anthropic-beta': OAUTH_BETA,
       },
       async fetch(request: Parameters<typeof globalThis.fetch>[0], init?: Parameters<typeof globalThis.fetch>[1]) {
-        let currentAuth = await getAuth()
-        if (
-          currentAuth.type === 'oauth' &&
-          currentAuth.expires !== undefined &&
-          currentAuth.expires < Date.now() &&
-          typeof currentAuth.refresh === 'string'
-        ) {
-          try {
-            const refreshed = await refreshAccessToken(currentAuth.refresh)
-            currentAuth = {
-              ...currentAuth,
-              key: refreshed.access_token,
-              refresh: refreshed.refresh_token ?? currentAuth.refresh,
-              expires:
-                refreshed.expires_in !== undefined ? Date.now() + refreshed.expires_in * 1000 : currentAuth.expires,
-            }
-          } catch (error) {
-            log('anthropic token refresh failed: %s', error instanceof Error ? error.message : String(error))
-          }
-        }
-
+        const currentAuth = await getAuth()
         const headers = new Headers(init?.headers)
-        headers.delete('x-api-key')
-        headers.delete('authorization')
-        headers.delete('Authorization')
-        headers.set('Authorization', `Bearer ${currentAuth.key ?? ''}`)
-        headers.set('anthropic-beta', OAUTH_BETA)
+        applyBearerHeaders(headers, currentAuth.key ?? '')
         return globalThis.fetch(request, { ...init, headers })
       },
     }

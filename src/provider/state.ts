@@ -23,8 +23,6 @@ async function resolveSecretRef(ref: SecretRef): Promise<string | undefined> {
 }
 
 const GOOGLE_PROVIDERS = new Set(['@ai-sdk/google', '@ai-sdk/google-vertex'])
-const AUTH_TOKEN_PROVIDERS = new Set(['@ai-sdk/anthropic'])
-
 function normalizeProviderBaseURL(providerId: string, baseURL: string): string {
   if (providerId !== 'openai') return baseURL
 
@@ -105,10 +103,6 @@ export async function buildProviderState(config: {
             h.set('Authorization', `Bearer ${token}`)
             return globalThis.fetch(url, { ...init, headers: h })
           }
-        } else if (AUTH_TOKEN_PROVIDERS.has(bp)) {
-          options.authToken = authCred.key
-          options.apiKey = undefined
-          key = undefined
         }
       }
     }
