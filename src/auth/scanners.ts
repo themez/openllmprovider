@@ -23,6 +23,7 @@ export interface ScanContext {
   homedir(): string
   platform(): string
   env(name: string): string | undefined
+  exec?(command: string): Promise<string | undefined>
 }
 
 // ---------------------------------------------------------------------------
@@ -47,6 +48,14 @@ export function createNodeScanContext(): ScanContext {
     },
     env(name: string): string | undefined {
       return process.env[name]
+    },
+    async exec(command: string): Promise<string | undefined> {
+      try {
+        const { execSync } = await import('node:child_process')
+        return execSync(command, { encoding: 'utf-8', timeout: 5000, stdio: ['pipe', 'pipe', 'pipe'] }).trim()
+      } catch {
+        return undefined
+      }
     },
   }
 }
@@ -332,6 +341,39 @@ function parseIniProfileKey(raw: string, profile: string, key: string): string |
 // Registry
 // ---------------------------------------------------------------------------
 
+const cursorScanner: DiskScanner = {
+  name: 'cursor',
+  async scan(ctx) {
+    const results: DiskScanResult[] = []
+    const home = ctx.homedir()
+    const platform = ctx.platform()
+
+    const dbPaths = [
+      platform === 'darwin'
+        ? join(home, 'Library', 'Application Support', 'Cursor', 'User', 'globalStorage', 'state.vscdb')
+        : undefined,
+      platform === 'win32'
+        ? join(ctx.env('APPDATA') ?? join(home, 'AppData', 'Roaming'), 'Cursor', 'User', 'globalStorage', 'state.vscdb')
+        : undefined,
+      join(configDir(ctx), 'Cursor', 'User', 'globalStorage', 'state.vscdb'),
+    ].filter((p): p is string => typeof p === 'string')
+
+    if (!ctx.exec) return results
+
+    for (const dbPath of dbPaths) {
+      const query = `SELECT value FROM ItemTable WHERE key='cursorAuth/openAIKey'`
+      const value = await ctx.exec(`sqlite3 "${dbPath}" "${query}"`)
+      if (value && value.length > 0) {
+        log('cursor: found openAIKey in %s', dbPath)
+        results.push({ providerId: 'openai', source: dbPath, key: value })
+        return results
+      }
+    }
+
+    return results
+  },
+}
+
 export const DEFAULT_SCANNERS: DiskScanner[] = [
   copilotScanner,
   vscodeSettingsScanner,
@@ -340,6 +382,7 @@ export const DEFAULT_SCANNERS: DiskScanner[] = [
   geminiCliScanner,
   gcloudAdcScanner,
   awsCredentialsScanner,
+  cursorScanner,
   opencodeAuthScanner,
 ]
 

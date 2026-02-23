@@ -3,7 +3,7 @@ import type { AuthCredential, AuthHook } from '../types/plugin.js'
 
 const log = createLogger('plugin:copilot')
 
-const GITHUB_CLIENT_ID = 'Iv1.b507a08c87ecfe98'
+const GITHUB_CLIENT_ID = 'Ov23li8tweQw6odWQebz'
 const GITHUB_DEVICE_CODE_URL = 'https://github.com/login/device/code'
 const GITHUB_ACCESS_TOKEN_URL = 'https://github.com/login/oauth/access_token'
 
@@ -17,6 +17,10 @@ export const copilotPlugin: AuthHook = {
       async fetch(...[request, init]: Parameters<typeof globalThis.fetch>): ReturnType<typeof globalThis.fetch> {
         const auth = await getAuth()
         const headers = new Headers(init?.headers)
+        // Remove SDK-set auth headers
+        headers.delete('x-api-key')
+        headers.delete('Authorization')
+        // Set copilot-specific auth
         headers.set('Authorization', `Bearer ${auth.refresh ?? auth.key ?? ''}`)
         headers.set('Openai-Intent', 'conversation-edits')
         log('copilot fetch: injecting auth headers')

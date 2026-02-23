@@ -4,6 +4,8 @@ import { createAuthStore } from '../auth/store.js'
 import type { CatalogProvider, ExtendConfig } from '../catalog/catalog.js'
 import { Catalog } from '../catalog/catalog.js'
 import { createLogger } from '../logger.js'
+import { copilotPlugin } from '../plugin/copilot.js'
+import { registerPlugin } from '../plugin/index.js'
 import type { ModelDefinition } from '../types/model.js'
 import type { ProviderUserConfig } from '../types/provider.js'
 import { BUNDLED_PROVIDERS } from './bundled.js'
@@ -29,6 +31,7 @@ const DEFAULT_PROVIDERS: Record<string, { name: string; env: string[]; bundledPr
   mistral: { name: 'Mistral', env: ['MISTRAL_API_KEY'], bundledProvider: '@ai-sdk/mistral' },
   groq: { name: 'Groq', env: ['GROQ_API_KEY'], bundledProvider: '@ai-sdk/groq' },
   openrouter: { name: 'OpenRouter', env: ['OPENROUTER_API_KEY'], bundledProvider: '@openrouter/ai-sdk-provider' },
+  'github-copilot': { name: 'GitHub Copilot', env: [], bundledProvider: '@ai-sdk/openai-compatible' },
 }
 
 function resolveBundledProviderKey(providerId: string, catalogProvider?: CatalogProvider): string | undefined {
@@ -50,6 +53,8 @@ export interface ProviderStore {
 
 export function createProviderStore(authStore: AuthStore, config?: ProviderStoreConfig): ProviderStore {
   const catalog = new Catalog()
+  // Auto-register built-in plugins
+  registerPlugin(copilotPlugin)
   catalog.extend({
     providers: Object.fromEntries(
       Object.entries(DEFAULT_PROVIDERS).map(([id, p]) => [
