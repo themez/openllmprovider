@@ -70,12 +70,22 @@ export interface AuthStore {
   set(providerId: string, credential: AuthCredential): Promise<void>
   remove(providerId: string): Promise<void>
   discover(options?: DiscoverOptions): Promise<DiscoveredCredential[]>
+  getPreferred?(providerId: string, prefer: 'api' | 'oauth'): Promise<AuthCredential | null>
+}
+
+function pickBestCredential(creds: AuthCredential[], prefer: 'api' | 'oauth' = 'api'): AuthCredential | undefined {
+  if (creds.length === 0) return undefined
+  const preferred = creds.find((c) => c.type === prefer && c.key !== undefined)
+  if (preferred !== undefined) return preferred
+  const withKey = creds.find((c) => c.key !== undefined)
+  if (withKey !== undefined) return withKey
+  return creds[0]
 }
 
 export function createAuthStore(options?: AuthStoreOptions): AuthStore {
   const externalData = options?.data
   const filePath = options?.path ?? getDefaultAuthPath()
-  const discoveredCredentials = new Map<string, AuthCredential>()
+  const discoveredCredentials = new Map<string, AuthCredential[]>()
 
   log('auth store created, path=%s, external=%s', filePath, externalData !== undefined)
 
@@ -138,9 +148,12 @@ export function createAuthStore(options?: AuthStoreOptions): AuthStore {
   function mergeWithDiscovered(fileData: Record<string, AuthCredential>): Record<string, AuthCredential> {
     if (discoveredCredentials.size === 0) return fileData
     const merged = { ...fileData }
-    for (const [pid, cred] of discoveredCredentials) {
+    for (const [pid, creds] of discoveredCredentials) {
       if (merged[pid] === undefined) {
-        merged[pid] = cred
+        const best = pickBestCredential(creds, 'api')
+        if (best !== undefined) {
+          merged[pid] = best
+        }
       }
     }
     log(
@@ -194,7 +207,9 @@ export function createAuthStore(options?: AuthStoreOptions): AuthStore {
           const value = process.env[envVar]
           if (value) {
             seen.add(providerId)
-            discoveredCredentials.set(providerId, { type: 'api', key: value })
+            const arr = discoveredCredentials.get(providerId) ?? []
+            arr.push({ type: 'api', key: value })
+            discoveredCredentials.set(providerId, arr)
             results.push({ providerId, source: 'env', key: value })
             log('discover: %s via env (%s)', providerId, envVar)
           }
@@ -217,14 +232,17 @@ export function createAuthStore(options?: AuthStoreOptions): AuthStore {
               key: disk.key,
               location: disk.source,
             })
-            if (disk.key !== undefined) {
-              discoveredCredentials.set(disk.providerId, { type: credType, key: disk.key })
-            }
             log('discover: %s via disk (%s), hasKey=%s', disk.providerId, disk.source, disk.key !== undefined)
-          } else if (disk.key !== undefined && !discoveredCredentials.has(disk.providerId)) {
-            // Earlier scanner found this provider without a key; upgrade with this key
-            discoveredCredentials.set(disk.providerId, { type: credType, key: disk.key })
-            log('discover: %s upgraded with key from %s', disk.providerId, disk.source)
+          }
+          if (disk.key !== undefined) {
+            const arr = discoveredCredentials.get(disk.providerId) ?? []
+            const cred: AuthCredential = { type: credType, key: disk.key }
+            if (disk.refresh) cred.refresh = disk.refresh
+            if (disk.accountId) cred.accountId = disk.accountId
+            if (disk.expires) cred.expires = disk.expires
+            arr.push(cred)
+            discoveredCredentials.set(disk.providerId, arr)
+            log('discover: %s stored credential from disk (%s), type=%s', disk.providerId, disk.source, credType)
           }
         }
       }
@@ -246,6 +264,17 @@ export function createAuthStore(options?: AuthStoreOptions): AuthStore {
 
       log('discover: complete, %d providers found', results.length)
       return results
+    },
+
+    async getPreferred(providerId: string, prefer: 'api' | 'oauth'): Promise<AuthCredential | null> {
+      const creds = discoveredCredentials.get(providerId)
+      if (creds !== undefined && creds.length > 0) {
+        const best = pickBestCredential(creds, prefer)
+        if (best !== undefined) return best
+      }
+      const store = mergeWithDiscovered(await readFile())
+      const credential = store[providerId]
+      return credential ?? null
     },
   }
 }
