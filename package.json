@@ -49,7 +49,7 @@
       }
     }
   },
-  "files": ["dist", "README.md"],
+  "files": ["dist", "src", "README.md"],
   "scripts": {
     "build": "tsdown",
     "dev": "tsdown --watch",
