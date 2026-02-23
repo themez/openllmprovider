@@ -1,48 +1,10 @@
 import { createLogger } from '../logger.js'
+import { type StorageAdapter, createDefaultStorage } from '../storage/index.js'
 import type { AuthCredential } from '../types/plugin.js'
 import type { DiskScanner, ScanContext } from './scanners.js'
 import { DEFAULT_SCANNERS, createNodeScanContext, runDiskScanners } from './scanners.js'
 
 const log = createLogger('auth')
-
-interface FsLike {
-  readFile(path: string, encoding: string): Promise<string>
-  writeFile(path: string, data: string, options: { encoding: string; mode: number }): Promise<void>
-  mkdir(path: string, options: { recursive: boolean }): Promise<string | undefined>
-  chmod(path: string, mode: number): Promise<void>
-}
-
-interface PathLike {
-  join(...paths: string[]): string
-  dirname(path: string): string
-}
-
-async function getFs(): Promise<FsLike> {
-  return (await import('node:fs/promises')) as unknown as FsLike
-}
-
-async function getPath(): Promise<PathLike> {
-  return await import('node:path')
-}
-
-function getDefaultAuthPath(): string {
-  const xdgDataHome = process.env.XDG_DATA_HOME
-  if (xdgDataHome) {
-    return `${xdgDataHome}/openllmprovider/auth.json`
-  }
-
-  const home = process.env.HOME ?? process.env.USERPROFILE ?? ''
-
-  if (process.platform === 'darwin') {
-    return `${home}/Library/Application Support/openllmprovider/auth.json`
-  }
-
-  return `${home}/.local/share/openllmprovider/auth.json`
-}
-
-function isEnoent(err: unknown): boolean {
-  return typeof err === 'object' && err !== null && (err as { code?: string }).code === 'ENOENT'
-}
 
 export interface DiscoveredCredential {
   providerId: string
@@ -60,7 +22,7 @@ export interface DiscoverOptions {
 }
 
 export interface AuthStoreOptions {
-  path?: string
+  storage?: StorageAdapter
   data?: Record<string, AuthCredential>
 }
 
@@ -84,37 +46,41 @@ function pickBestCredential(creds: AuthCredential[], prefer: 'api' | 'oauth' = '
 
 export function createAuthStore(options?: AuthStoreOptions): AuthStore {
   const externalData = options?.data
-  const filePath = options?.path ?? getDefaultAuthPath()
+  let storagePromise: Promise<StorageAdapter> | undefined
   const discoveredCredentials = new Map<string, AuthCredential[]>()
 
-  log('auth store created, path=%s, external=%s', filePath, externalData !== undefined)
+  log('auth store created, external=%s', externalData !== undefined)
 
-  async function readFile(): Promise<Record<string, AuthCredential>> {
+  function getStorage(): Promise<StorageAdapter> {
+    if (storagePromise === undefined) {
+      storagePromise = options?.storage ? Promise.resolve(options.storage) : createDefaultStorage()
+    }
+    return storagePromise
+  }
+
+  async function readAuthState(): Promise<Record<string, AuthCredential>> {
     if (externalData !== undefined) {
       log('using external data, skipping file read')
       return { ...externalData }
     }
 
-    const fs = await getFs()
-    try {
-      const raw = await fs.readFile(filePath, 'utf-8')
-      const parsed: unknown = JSON.parse(raw)
-      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-        log('auth.json is malformed, returning empty store')
-        return {}
-      }
-      log('read auth.json with %d entries', Object.keys(parsed).length)
-      return parsed as Record<string, AuthCredential>
-    } catch (err: unknown) {
-      if (isEnoent(err)) {
-        log('auth.json not found, returning empty store')
-        return {}
-      }
-      throw err
+    const storage = await getStorage()
+    const raw = await storage.get(AUTH_STORE_KEY)
+    if (raw === null) {
+      log('auth store not found, returning empty store')
+      return {}
     }
+
+    const parsed: unknown = JSON.parse(raw)
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      log('auth store payload is malformed, returning empty store')
+      return {}
+    }
+    log('read auth store with %d entries', Object.keys(parsed).length)
+    return parsed as Record<string, AuthCredential>
   }
 
-  async function writeFile(data: Record<string, AuthCredential>): Promise<void> {
+  async function writeAuthState(data: Record<string, AuthCredential>): Promise<void> {
     if (externalData !== undefined) {
       for (const [k, v] of Object.entries(data)) {
         externalData[k] = v
@@ -128,21 +94,11 @@ export function createAuthStore(options?: AuthStoreOptions): AuthStore {
       return
     }
 
-    const fs = await getFs()
-    const path = await getPath()
-    const dir = path.dirname(filePath)
-
-    await fs.mkdir(dir, { recursive: true })
     const content = JSON.stringify(data, null, 2)
-    await fs.writeFile(filePath, content, { encoding: 'utf-8', mode: 0o600 })
+    const storage = await getStorage()
+    await storage.set(AUTH_STORE_KEY, content)
 
-    try {
-      await fs.chmod(filePath, 0o600)
-    } catch {
-      // chmod is best-effort; some filesystems don't support it
-    }
-
-    log('wrote auth.json with %d entries', Object.keys(data).length)
+    log('wrote auth store with %d entries', Object.keys(data).length)
   }
 
   function mergeWithDiscovered(fileData: Record<string, AuthCredential>): Record<string, AuthCredential> {
@@ -166,11 +122,11 @@ export function createAuthStore(options?: AuthStoreOptions): AuthStore {
 
   return {
     async all(): Promise<Record<string, AuthCredential>> {
-      return mergeWithDiscovered(await readFile())
+      return mergeWithDiscovered(await readAuthState())
     },
 
     async get(providerId: string): Promise<AuthCredential | null> {
-      const store = mergeWithDiscovered(await readFile())
+      const store = mergeWithDiscovered(await readAuthState())
       const credential = store[providerId]
       if (credential === undefined) {
         log('get(%s): not found', providerId)
@@ -181,20 +137,20 @@ export function createAuthStore(options?: AuthStoreOptions): AuthStore {
     },
 
     async set(providerId: string, credential: AuthCredential): Promise<void> {
-      const store = await readFile()
+      const store = await readAuthState()
       store[providerId] = credential
-      await writeFile(store)
+      await writeAuthState(store)
       log('set(%s): type=%s', providerId, credential.type)
     },
 
     async remove(providerId: string): Promise<void> {
-      const store = await readFile()
+      const store = await readAuthState()
       if (!(providerId in store)) {
         log('remove(%s): not found, no-op', providerId)
         return
       }
       delete store[providerId]
-      await writeFile(store)
+      await writeAuthState(store)
       log('remove(%s): done', providerId)
     },
 
@@ -246,7 +202,7 @@ export function createAuthStore(options?: AuthStoreOptions): AuthStore {
       }
       let authData: Record<string, AuthCredential>
       try {
-        authData = await readFile()
+        authData = await readAuthState()
       } catch (err: unknown) {
         log('discover: failed to read auth.json: %s', err instanceof Error ? err.message : String(err))
         authData = {}
@@ -256,7 +212,7 @@ export function createAuthStore(options?: AuthStoreOptions): AuthStore {
         if (!seen.has(providerId)) {
           seen.add(providerId)
           results.push({ providerId, source: 'auth', credential })
-          log('discover: %s via auth.json', providerId)
+          log('discover: %s via auth store', providerId)
         }
       }
 
@@ -270,12 +226,14 @@ export function createAuthStore(options?: AuthStoreOptions): AuthStore {
         const best = pickBestCredential(creds, prefer)
         if (best !== undefined) return best
       }
-      const store = mergeWithDiscovered(await readFile())
+      const store = mergeWithDiscovered(await readAuthState())
       const credential = store[providerId]
       return credential ?? null
     },
   }
 }
+
+const AUTH_STORE_KEY = 'auth:store'
 
 const ENV_HINTS: Array<[string, string]> = [
   ['ANTHROPIC_API_KEY', 'anthropic'],
