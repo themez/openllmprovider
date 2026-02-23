@@ -117,6 +117,13 @@ export function createProviderStore(authStore: AuthStore, config?: ProviderStore
     return providerState !== undefined && providerState.source !== 'none'
   }
 
+
+  function isProviderUsable(providerId: string): boolean {
+    const catalogProvider = catalog.getProvider(providerId)
+    const bundledKey = resolveBundledProviderKey(providerId, catalogProvider)
+    return bundledKey !== undefined && BUNDLED_PROVIDERS[bundledKey] !== undefined
+  }
+
   return {
     async getLanguageModel(providerId: string, modelId: string): Promise<LanguageModelV3> {
       await ensureCatalogEnriched()
@@ -168,7 +175,7 @@ export function createProviderStore(authStore: AuthStore, config?: ProviderStore
 
     async listProviders(options?: ProviderListOptions): Promise<CatalogProvider[]> {
       await ensureCatalogEnriched()
-      const providers = catalog.listProviders()
+      const providers = catalog.listProviders().filter((p) => isProviderUsable(p.id))
       if (options?.includeUnavailable === true) {
         return providers
       }
@@ -190,7 +197,7 @@ export function createProviderStore(authStore: AuthStore, config?: ProviderStore
         return catalog.listModels(providerId)
       }
 
-      const providers = catalog.listProviders().filter((provider) => hasProviderAuth(state, provider.id))
+      const providers = catalog.listProviders().filter((p) => isProviderUsable(p.id) && hasProviderAuth(state, p.id))
       const results: ModelDefinition[] = []
       for (const provider of providers) {
         results.push(...catalog.listModels(provider.id))
