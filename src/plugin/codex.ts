@@ -1,3 +1,6 @@
+import { spawn } from 'node:child_process'
+import { createHash, randomBytes } from 'node:crypto'
+import { createServer } from 'node:http'
 import { createLogger } from '../logger.js'
 import type { AuthCredential, AuthHook, AuthMethod, ProviderInfo } from '../types/plugin.js'
 
@@ -6,12 +9,16 @@ const log = createLogger('plugin:codex')
 const OAUTH_DUMMY_KEY = 'codex-oauth-placeholder'
 const CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann'
 const ISSUER = 'https://auth.openai.com'
+const OPENAI_AUTHORIZE_URL = `${ISSUER}/oauth/authorize`
 const OPENAI_TOKEN_URL = `${ISSUER}/oauth/token`
 const OPENAI_DEVICE_USERCODE_URL = `${ISSUER}/api/accounts/deviceauth/usercode`
 const OPENAI_DEVICE_TOKEN_URL = `${ISSUER}/api/accounts/deviceauth/token`
 const OPENAI_DEVICE_VERIFY_URL = `${ISSUER}/codex/device`
 const CODEX_API_ENDPOINT = 'https://chatgpt.com/backend-api/codex/responses'
 const DEVICE_USER_AGENT = 'openllmprovider/codex-auth'
+const OAUTH_CALLBACK_PORT = 1455
+const OAUTH_CALLBACK_PATH = '/auth/callback'
+const OAUTH_CALLBACK_TIMEOUT_MS = 5 * 60 * 1000
 
 interface TokenResponse {
   access_token: string
@@ -76,6 +83,155 @@ interface DeviceAuthStartResponse {
 interface DeviceAuthTokenResponse {
   authorization_code: string
   code_verifier: string
+}
+
+interface BrowserOauthStart {
+  authorizationUrl: string
+  callbackPromise: Promise<{ code: string; state?: string }>
+  expectedState: string
+  codeVerifier: string
+  stop: () => Promise<void>
+}
+
+function toBase64Url(input: Buffer): string {
+  return input.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
+}
+
+function createPkcePair(): { verifier: string; challenge: string } {
+  const verifier = toBase64Url(randomBytes(32))
+  const challenge = toBase64Url(createHash('sha256').update(verifier).digest())
+  return { verifier, challenge }
+}
+
+function openUrlInBrowser(url: string): void {
+  const platform = process.platform
+  const command = platform === 'darwin' ? 'open' : platform === 'win32' ? 'rundll32' : 'xdg-open'
+  const args = platform === 'win32' ? ['url.dll,FileProtocolHandler', url] : [url]
+  try {
+    const child = spawn(command, args, { detached: true, stdio: 'ignore' })
+    child.unref()
+  } catch {
+    log('failed to open browser automatically')
+  }
+}
+
+async function startBrowserOAuthFlow(): Promise<BrowserOauthStart> {
+  const { verifier, challenge } = createPkcePair()
+  const state = toBase64Url(randomBytes(24))
+  const redirectUri = `http://localhost:${OAUTH_CALLBACK_PORT}${OAUTH_CALLBACK_PATH}`
+
+  const authUrl = new URL(OPENAI_AUTHORIZE_URL)
+  authUrl.searchParams.set('response_type', 'code')
+  authUrl.searchParams.set('client_id', CLIENT_ID)
+  authUrl.searchParams.set('redirect_uri', redirectUri)
+  authUrl.searchParams.set('scope', 'openid profile email offline_access')
+  authUrl.searchParams.set('code_challenge', challenge)
+  authUrl.searchParams.set('code_challenge_method', 'S256')
+  authUrl.searchParams.set('state', state)
+  authUrl.searchParams.set('id_token_add_organizations', 'true')
+  authUrl.searchParams.set('codex_cli_simplified_flow', 'true')
+  authUrl.searchParams.set('originator', 'openllmprovider')
+
+  const successPage =
+    '<!doctype html><html><body style="font-family:system-ui;padding:24px">Authentication complete. You can close this tab.</body></html>'
+  const errorPage =
+    '<!doctype html><html><body style="font-family:system-ui;padding:24px">Authentication failed. Return to terminal.</body></html>'
+
+  let resolved = false
+  let rejectAuth: (reason?: unknown) => void = () => {}
+  let closeServer: () => Promise<void> = async () => {}
+
+  const callbackPromise = new Promise<{ code: string; state?: string }>((resolve, reject) => {
+    rejectAuth = reject
+    const server = createServer((req, res) => {
+      if (!req.url) {
+        res.statusCode = 400
+        res.end(errorPage)
+        if (!resolved) {
+          resolved = true
+          reject(new Error('OAuth callback request missing URL'))
+        }
+        return
+      }
+
+      const callbackUrl = new URL(req.url, `http://localhost:${OAUTH_CALLBACK_PORT}`)
+      if (callbackUrl.pathname !== OAUTH_CALLBACK_PATH) {
+        res.statusCode = 404
+        res.end('Not Found')
+        return
+      }
+
+      const error = callbackUrl.searchParams.get('error')
+      const errorDescription = callbackUrl.searchParams.get('error_description')
+      const code = callbackUrl.searchParams.get('code') ?? undefined
+      const responseState = callbackUrl.searchParams.get('state') ?? undefined
+
+      if (error) {
+        res.statusCode = 400
+        res.setHeader('Content-Type', 'text/html; charset=utf-8')
+        res.end(errorPage)
+        if (!resolved) {
+          resolved = true
+          reject(new Error(errorDescription ?? error))
+        }
+        return
+      }
+
+      if (!code) {
+        res.statusCode = 400
+        res.setHeader('Content-Type', 'text/html; charset=utf-8')
+        res.end(errorPage)
+        if (!resolved) {
+          resolved = true
+          reject(new Error('OAuth callback missing code'))
+        }
+        return
+      }
+
+      res.statusCode = 200
+      res.setHeader('Content-Type', 'text/html; charset=utf-8')
+      res.end(successPage)
+      if (!resolved) {
+        resolved = true
+        resolve({ code, state: responseState })
+      }
+    })
+
+    server.once('error', (error) => {
+      if (!resolved) {
+        resolved = true
+        reject(error)
+      }
+    })
+
+    server.listen(OAUTH_CALLBACK_PORT, '127.0.0.1')
+
+    closeServer = async () => {
+      await new Promise<void>((closeResolve) => {
+        server.close(() => closeResolve())
+      })
+    }
+  })
+
+  const timeout = setTimeout(() => {
+    if (!resolved) {
+      resolved = true
+      rejectAuth(new Error('Browser OAuth timed out waiting for callback'))
+    }
+  }, OAUTH_CALLBACK_TIMEOUT_MS)
+
+  const stop = async (): Promise<void> => {
+    clearTimeout(timeout)
+    await closeServer()
+  }
+
+  return {
+    authorizationUrl: authUrl.toString(),
+    callbackPromise,
+    expectedState: state,
+    codeVerifier: verifier,
+    stop,
+  }
 }
 
 function extractApiErrorMessage(rawBody: string): string {
@@ -204,6 +360,31 @@ async function exchangeAuthorizationCodeForTokens(
   if (!res.ok) {
     const rawBody = await res.text()
     throw new Error(`Token exchange failed: ${res.status} ${res.statusText} ${rawBody}`)
+  }
+
+  const raw = (await res.json()) as Record<string, unknown>
+  return parseTokenResponse(raw)
+}
+
+async function exchangeBrowserAuthorizationCode(code: string, codeVerifier: string): Promise<TokenResponse> {
+  const redirectUri = `http://localhost:${OAUTH_CALLBACK_PORT}${OAUTH_CALLBACK_PATH}`
+  const body = new URLSearchParams({
+    grant_type: 'authorization_code',
+    code,
+    redirect_uri: redirectUri,
+    client_id: CLIENT_ID,
+    code_verifier: codeVerifier,
+  })
+
+  const res = await globalThis.fetch(OPENAI_TOKEN_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: body.toString(),
+  })
+
+  if (!res.ok) {
+    const rawBody = await res.text()
+    throw new Error(`Browser token exchange failed: ${res.status} ${res.statusText} ${rawBody}`)
   }
 
   const raw = (await res.json()) as Record<string, unknown>
@@ -416,8 +597,39 @@ export const codexPlugin: AuthHook = {
 
   methods: [
     {
+      type: 'oauth',
+      label: 'ChatGPT Pro/Plus (browser)',
+
+      async handler(): Promise<AuthCredential> {
+        log('starting browser OAuth flow')
+        const oauth = await startBrowserOAuthFlow()
+
+        try {
+          console.log('Open this URL to continue Codex login:')
+          console.log(oauth.authorizationUrl)
+          openUrlInBrowser(oauth.authorizationUrl)
+
+          const callback = await oauth.callbackPromise
+          if (callback.state !== undefined && callback.state !== oauth.expectedState) {
+            throw new Error('OAuth state mismatch')
+          }
+
+          const tokens = await exchangeBrowserAuthorizationCode(callback.code, oauth.codeVerifier)
+
+          return {
+            type: 'oauth',
+            key: tokens.access_token,
+            refresh: tokens.refresh_token,
+            expires: Date.now() + tokens.expires_in * 1000,
+          }
+        } finally {
+          await oauth.stop()
+        }
+      },
+    },
+    {
       type: 'device-flow',
-      label: 'OpenAI Codex (Device Flow)',
+      label: 'ChatGPT Pro/Plus (headless)',
 
       async handler(): Promise<AuthCredential> {
         log('starting OpenAI device flow')
