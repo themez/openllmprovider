@@ -11,6 +11,9 @@ export interface DiskScanResult {
   source: string
   key?: string
   credentialType?: 'api' | 'oauth' | 'wellknown'
+  refresh?: string
+  accountId?: string
+  expires?: number
 }
 
 export interface DiskScanner {
@@ -159,13 +162,40 @@ const codexCliScanner: DiskScanner = {
     const authPath = join(ctx.homedir(), '.codex', 'auth.json')
     const json = await readJson(ctx, authPath)
     if (!json) return results
-
-    const token = json.token ?? json.apiKey
-    if (typeof token === 'string' && token.length > 0) {
-      log('codex-cli: found token in %s', authPath)
-      results.push({ providerId: 'openai', source: authPath, key: token })
+    // Check for OPENAI_API_KEY first (user-set API key takes priority)
+    const apiKey = json.OPENAI_API_KEY
+    if (typeof apiKey === 'string' && apiKey.length > 0) {
+      log('codex-cli: found OPENAI_API_KEY in %s', authPath)
+      results.push({ providerId: 'openai', source: authPath, key: apiKey, credentialType: 'api' })
+      return results
     }
 
+    // OAuth tokens from codex login
+    const tokens = json.tokens
+    if (tokens !== null && typeof tokens === 'object' && !Array.isArray(tokens)) {
+      const t = tokens as Record<string, unknown>
+      const accessToken = t.access_token
+      if (typeof accessToken === 'string' && accessToken.length > 0) {
+        const refreshToken = typeof t.refresh_token === 'string' ? t.refresh_token : undefined
+        const accountId = typeof t.account_id === 'string' ? t.account_id : undefined
+        log('codex-cli: found OAuth tokens in %s', authPath)
+        results.push({
+          providerId: 'openai',
+          source: authPath,
+          key: accessToken,
+          credentialType: 'oauth',
+          refresh: refreshToken,
+          accountId,
+        })
+        return results
+      }
+    }
+
+    // Fallback: flat token or apiKey field
+    const token = json.token ?? json.apiKey
+    if (typeof token === 'string' && token.length > 0) {
+      results.push({ providerId: 'openai', source: authPath, key: token })
+    }
     return results
   },
 }
@@ -181,12 +211,25 @@ const geminiCliScanner: DiskScanner = {
       const path = join(geminiHome, file)
       const json = await readJson(ctx, path)
       if (!json) continue
+      const accessToken = typeof json.access_token === 'string' ? json.access_token : undefined
+      const refreshToken = typeof json.refresh_token === 'string' ? json.refresh_token : undefined
+      const expiryDate = typeof json.expiry_date === 'number' ? json.expiry_date : undefined
 
-      const hasToken =
-        'access_token' in json ||
-        'refresh_token' in json ||
-        (Array.isArray(json.accounts) && (json.accounts as unknown[]).length > 0)
-      if (hasToken) {
+      if (accessToken || refreshToken) {
+        log('gemini-cli: found credentials in %s', path)
+        results.push({
+          providerId: 'google',
+          source: path,
+          key: accessToken,
+          credentialType: 'oauth',
+          refresh: refreshToken,
+          expires: expiryDate,
+        })
+        return results
+      }
+
+      // Fallback: google_accounts.json with accounts array
+      if (Array.isArray(json.accounts) && (json.accounts as unknown[]).length > 0) {
         log('gemini-cli: found credentials in %s', path)
         results.push({ providerId: 'google', source: path })
         return results
@@ -270,8 +313,19 @@ const opencodeAuthScanner: DiskScanner = {
 
         const key =
           typeof typed.key === 'string' ? typed.key : typeof typed.access === 'string' ? typed.access : undefined
+        const refresh = typeof typed.refresh === 'string' ? typed.refresh : undefined
+        const accountId = typeof typed.accountId === 'string' ? typed.accountId : undefined
+        const expires = typeof typed.expires === 'number' ? typed.expires : undefined
         log('opencode-auth: found %s (%s) in %s', providerId, type, path)
-        results.push({ providerId, source: path, key, credentialType: type as DiskScanResult['credentialType'] })
+        results.push({
+          providerId,
+          source: path,
+          key,
+          credentialType: type as DiskScanResult['credentialType'],
+          refresh,
+          accountId,
+          expires,
+        })
       }
 
       if (results.length > 0) return results
@@ -365,7 +419,7 @@ const cursorScanner: DiskScanner = {
       const value = await ctx.exec(`sqlite3 "${dbPath}" "${query}"`)
       if (value && value.length > 0) {
         log('cursor: found openAIKey in %s', dbPath)
-        results.push({ providerId: 'openai', source: dbPath, key: value })
+        results.push({ providerId: 'cursor', source: dbPath, key: value })
         return results
       }
     }
