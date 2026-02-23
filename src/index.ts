@@ -10,6 +10,7 @@ export { registerPlugin, getPlugins, getPluginForProvider } from './plugin/index
 export { copilotPlugin } from './plugin/copilot.js'
 export { codexPlugin } from './plugin/codex.js'
 export { googlePlugin } from './plugin/google.js'
+export { anthropicPlugin } from './plugin/anthropic.js'
 
 export { MemoryStorage, FileStorage, createDefaultStorage } from './storage/index.js'
 export type { StorageAdapter } from './storage/index.js'
