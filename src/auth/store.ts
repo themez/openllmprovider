@@ -149,7 +149,7 @@ export function createAuthStore(options?: AuthStoreOptions): AuthStore {
     if (discoveredCredentials.size === 0) return fileData
     const merged = { ...fileData }
     for (const [pid, creds] of discoveredCredentials) {
-      if (merged[pid] === undefined) {
+      if (merged[pid] === undefined || !merged[pid].key) {
         const best = pickBestCredential(creds, 'api')
         if (best !== undefined) {
           merged[pid] = best

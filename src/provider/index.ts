@@ -161,6 +161,10 @@ export function createProviderStore(authStore: AuthStore, config?: ProviderStore
       if (providerState.key !== undefined) {
         sdkOptions.apiKey = providerState.key
       }
+      // authToken and apiKey must not coexist (e.g. @ai-sdk/anthropic rejects both)
+      if (sdkOptions.authToken !== undefined) {
+        sdkOptions.apiKey = undefined
+      }
 
       const sdk = factory(sdkOptions)
       log('calling sdk.languageModel(%s)', modelId)
