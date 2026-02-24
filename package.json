@@ -1,6 +1,6 @@
 {
   "name": "openllmprovider",
-  "version": "0.1.0-alpha.0",
+  "version": "0.1.0",
   "description": "Control plane for AI model providers",
   "type": "module",
   "sideEffects": false,
