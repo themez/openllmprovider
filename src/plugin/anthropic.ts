@@ -246,6 +246,14 @@ async function resolveOAuthToken(
 //      c. Otherwise, exchange the OAuth access_token for an API key via
 //         /api/oauth/claude_cli/create_api_key
 //      d. If exchange fails, fall back to Bearer token auth with custom fetch
+//
+// IMPORTANT: Anthropic uses refresh token rotation — each refresh request
+// invalidates the old refresh_token and returns a new one. This means OAuth
+// credentials CANNOT be shared across applications. If opencode and this
+// project both hold the same credential, whichever refreshes first will
+// invalidate the other's refresh_token, causing a 400 error on subsequent
+// refresh attempts. Each application must perform its own OAuth flow and
+// maintain its own credential independently.
 // ---------------------------------------------------------------------------
 export const anthropicPlugin: AuthHook = {
   provider: 'anthropic',

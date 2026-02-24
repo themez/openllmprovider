@@ -286,6 +286,12 @@ const awsCredentialsScanner: DiskScanner = {
   },
 }
 
+// Scan opencode's auth.json for saved credentials (API keys only).
+// NOTE: OAuth credentials from opencode should NOT be reused. Providers like
+// Anthropic use refresh token rotation — each refresh invalidates the old
+// refresh_token and issues a new one. If two applications share the same OAuth
+// credential, whichever refreshes first will break the other. API key credentials
+// (type: 'api') are safe to share since they don't expire or rotate.
 const opencodeAuthScanner: DiskScanner = {
   name: 'opencode-auth',
   async scan(ctx) {
