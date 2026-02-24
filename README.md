@@ -35,6 +35,76 @@ const model = await providerStore.getLanguageModel('anthropic', 'claude-sonnet-4
 - **OAuth flows** — Built-in OAuth for Claude Pro/Max, ChatGPT Pro/Plus (Codex), Google Gemini, and GitHub Copilot
 - **Token lifecycle** — Automatic refresh of expired OAuth tokens with persistence back to the auth store
 - **Plugin system** — Extensible auth hooks for custom providers
+- **Model info enrichment** — Context window, cost, modalities, and capabilities from [models.dev](https://models.dev)
+
+## Model Info (models.dev)
+
+Every model returned by `providerStore.getModel()` and `providerStore.listModels()` is automatically enriched with metadata from [models.dev](https://models.dev) — context window, pricing, modalities, capabilities, and more. The catalog is fetched once on first use and cached for the lifetime of the store.
+
+```typescript
+const model = await providerStore.getModel('anthropic', 'claude-sonnet-4-6')
+
+model.limit.context   // 200000
+model.limit.output    // 16384
+model.modalities      // { input: ['text', 'image', 'pdf'], output: ['text'] }
+model.cost            // { input: 3, output: 15 } (per million tokens)
+model.reasoning       // false
+model.tool_call       // true
+model.provenance      // 'remote' — sourced from models.dev
+```
+
+### Available Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `modelId` | `string` | Model identifier (e.g. `claude-sonnet-4-6`) |
+| `name` | `string?` | Display name |
+| `family` | `string?` | Model family (e.g. `claude`) |
+| `type` | `string?` | `chat`, `embedding`, or `image` |
+| `reasoning` | `boolean?` | Supports extended thinking |
+| `tool_call` | `boolean?` | Supports tool/function calling |
+| `structured_output` | `boolean?` | Supports structured output |
+| `modalities` | `object` | `{ input: ('text'\|'image'\|'audio'\|'video'\|'pdf')[], output: ('text'\|'image'\|'audio')[] }` |
+| `limit` | `object` | `{ context: number, output: number, input_images?: number }` |
+| `cost` | `object?` | `{ input: number, output: number, cache_read?: number, cache_write?: number }` (per million tokens) |
+| `status` | `string?` | `stable`, `beta`, or `deprecated` |
+| `provenance` | `string?` | `snapshot` (bundled), `remote` (from models.dev), or `user-override` |
+
+### Listing Models
+
+```typescript
+// List all models for providers you have credentials for
+const models = await providerStore.listModels()
+
+// List models for a specific provider
+const anthropicModels = await providerStore.listModels('anthropic')
+
+// Include models even without credentials (e.g. for browsing)
+const allModels = await providerStore.listModels('anthropic', { includeUnavailable: true })
+```
+
+### Custom Provider / Model Overrides
+
+Use `extend()` to register custom providers or override model metadata:
+
+```typescript
+providerStore.extend({
+  providers: {
+    'my-provider': {
+      name: 'My Provider',
+      bundledProvider: '@ai-sdk/openai-compatible',
+      baseURL: 'https://api.my-provider.com/v1',
+      models: {
+        'my-model': {
+          name: 'My Model',
+          modalities: { input: ['text', 'image'], output: ['text'] },
+          limit: { context: 128000, output: 4096 },
+        },
+      },
+    },
+  },
+})
+```
 
 ## Auth Store
 
