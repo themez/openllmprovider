@@ -491,7 +491,7 @@ async function bufferCodexStream(response: Response): Promise<Record<string, unk
 export const codexPlugin: AuthHook = {
   provider: 'openai',
 
-  async loader(getAuth: () => Promise<AuthCredential>, _provider: ProviderInfo): Promise<Record<string, unknown>> {
+  async loader(getAuth: () => Promise<AuthCredential>, _provider: ProviderInfo, setAuth: (credential: AuthCredential) => Promise<void>): Promise<Record<string, unknown>> {
     const auth = await getAuth()
 
     // Only intercept OAuth credentials — API keys use the standard SDK path
@@ -501,16 +501,13 @@ export const codexPlugin: AuthHook = {
     }
 
     log('codex loader: activating OAuth fetch wrapper')
-
     return {
       apiKey: OAUTH_DUMMY_KEY,
-
       async fetch(
         request: Parameters<typeof globalThis.fetch>[0],
         init?: Parameters<typeof globalThis.fetch>[1]
       ): Promise<Response> {
         let currentAuth = await getAuth()
-
         if (
           currentAuth.expires !== undefined &&
           currentAuth.expires < Date.now() &&
@@ -525,10 +522,12 @@ export const codexPlugin: AuthHook = {
               refresh: tokens.refresh_token ?? currentAuth.refresh,
               expires: Date.now() + tokens.expires_in * 1000,
             }
+            await setAuth(currentAuth).catch((err) =>
+              log('failed to persist refreshed credential: %s', err instanceof Error ? err.message : String(err)),
+            )
             log('token refreshed successfully')
           } catch (err: unknown) {
             log('token refresh failed: %s', err instanceof Error ? err.message : String(err))
-            // Fall through and try with existing credentials
           }
         }
 

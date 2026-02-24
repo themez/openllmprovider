@@ -329,7 +329,7 @@ async function normalizeCodeAssistResponse(response: Response, streaming: boolea
 export const googlePlugin: AuthHook = {
   provider: 'google',
 
-  async loader(getAuth: () => Promise<AuthCredential>, _provider: ProviderInfo): Promise<Record<string, unknown>> {
+  async loader(getAuth: () => Promise<AuthCredential>, _provider: ProviderInfo, setAuth: (credential: AuthCredential) => Promise<void>): Promise<Record<string, unknown>> {
     const initialAuth = await getAuth()
 
     if (initialAuth.type !== 'oauth') {
@@ -338,30 +338,35 @@ export const googlePlugin: AuthHook = {
     }
 
     log('google loader: activating OAuth fetch wrapper')
-
     return {
       apiKey: 'google-oauth-placeholder',
-
       async fetch(
         inputValue: Parameters<typeof globalThis.fetch>[0],
         init?: Parameters<typeof globalThis.fetch>[1]
       ): Promise<Response> {
-        const latestAuth = await getAuth()
-
-        if (latestAuth.type !== 'oauth') {
+        const currentAuth = await getAuth()
+        if (currentAuth.type !== 'oauth') {
           return globalThis.fetch(inputValue, init)
         }
-
-        let currentToken = latestAuth.key ?? ''
+        let currentToken = currentAuth.key ?? ''
         if (
-          latestAuth.expires !== undefined &&
-          latestAuth.expires < Date.now() &&
-          typeof latestAuth.refresh === 'string'
+          currentAuth.expires !== undefined &&
+          currentAuth.expires < Date.now() &&
+          typeof currentAuth.refresh === 'string'
         ) {
           log('token expired, attempting refresh...')
           try {
-            const tokens = await refreshGoogleToken(latestAuth.refresh)
+            const tokens = await refreshGoogleToken(currentAuth.refresh)
             currentToken = tokens.access_token
+            const updated: AuthCredential = {
+              ...currentAuth,
+              key: tokens.access_token,
+              refresh: tokens.refresh_token ?? currentAuth.refresh,
+              expires: Date.now() + tokens.expires_in * 1000,
+            }
+            await setAuth(updated).catch((err) =>
+              log('failed to persist refreshed credential: %s', err instanceof Error ? err.message : String(err)),
+            )
             log('token refreshed successfully, expires in %ds', tokens.expires_in)
           } catch (err: unknown) {
             log('token refresh failed: %s', err instanceof Error ? err.message : String(err))

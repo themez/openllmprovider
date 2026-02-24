@@ -336,16 +336,9 @@ function normalizeCredential(rawCredential: unknown): AuthCredential | undefined
   const type =
     typed.type === 'api' || typed.type === 'oauth' || typed.type === 'wellknown' ? typed.type : ('api' as const)
 
-  const key =
-    typeof typed.key === 'string' && typed.key.length > 0
-      ? typed.key
-      : typeof typed.access === 'string' && typed.access.length > 0
-        ? typed.access
-        : undefined
-
-  const { access: _legacyAccess, ...rest } = typed
+  const key = typeof typed.key === 'string' && typed.key.length > 0 ? typed.key : undefined
   return {
-    ...rest,
+    ...typed,
     type,
     key,
   } as AuthCredential

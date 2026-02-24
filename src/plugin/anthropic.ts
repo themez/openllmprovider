@@ -195,24 +195,69 @@ async function createApiKeyFromOAuthAccessToken(accessToken: string): Promise<st
   return raw.raw_key
 }
 
+/**
+ * Resolve a fresh OAuth access_token from the credential, refreshing if expired.
+ * Used both during loader setup and inside the per-request Bearer fallback fetch.
+ * When a refresh occurs and setAuth is provided, the updated credential is persisted.
+ */
+async function resolveOAuthToken(
+  auth: AuthCredential,
+  setAuth?: (credential: AuthCredential) => Promise<void>,
+): Promise<string | undefined> {
+  let token = auth.key
+  if (auth.expires !== undefined && auth.expires < Date.now() && typeof auth.refresh === 'string') {
+    try {
+      const refreshed = await refreshAccessToken(auth.refresh)
+      token = refreshed.access_token
+      if (setAuth) {
+        const updated: AuthCredential = {
+          ...auth,
+          key: refreshed.access_token,
+          refresh: refreshed.refresh_token ?? auth.refresh,
+          expires: refreshed.expires_in !== undefined ? Date.now() + refreshed.expires_in * 1000 : undefined,
+        }
+        await setAuth(updated).catch((err) =>
+          log('failed to persist refreshed credential: %s', err instanceof Error ? err.message : String(err)),
+        )
+      }
+    } catch (error) {
+      log('anthropic token refresh failed: %s', error instanceof Error ? error.message : String(error))
+    }
+  }
+  return typeof token === 'string' && token.length > 0 ? token : undefined
+}
+
+// ---------------------------------------------------------------------------
+// Anthropic auth supports two modes:
+//
+// 1. API key (type: 'api')
+//    - key holds a direct API key (sk-ant-api03-xxx)
+//    - The loader returns {} — no custom config needed, the SDK uses x-api-key
+//      header automatically.
+//
+// 2. OAuth (type: 'oauth')
+//    - key holds the short-lived access_token (sk-ant-oat-xxx)
+//    - refresh holds the long-lived refresh_token (sk-ant-ort-xxx)
+//    - expires is the absolute timestamp (ms) when the access_token expires
+//    - The loader handles the full lifecycle:
+//      a. If the access_token is expired and a refresh_token exists, refresh it
+//      b. If the token looks like an API key (sk-ant- but not oat/ort), use as apiKey
+//      c. Otherwise, exchange the OAuth access_token for an API key via
+//         /api/oauth/claude_cli/create_api_key
+//      d. If exchange fails, fall back to Bearer token auth with custom fetch
+// ---------------------------------------------------------------------------
 export const anthropicPlugin: AuthHook = {
   provider: 'anthropic',
 
-  async loader(getAuth) {
+  // API key auth: loader is a no-op — the SDK handles x-api-key header directly
+  async loader(getAuth, _provider, setAuth) {
     const auth = await getAuth()
     if (auth.type !== 'oauth') return {}
 
-    let token = auth.key
-    if (auth.expires !== undefined && auth.expires < Date.now() && typeof auth.refresh === 'string') {
-      try {
-        const refreshed = await refreshAccessToken(auth.refresh)
-        token = refreshed.access_token
-      } catch (error) {
-        log('anthropic token refresh failed: %s', error instanceof Error ? error.message : String(error))
-      }
-    }
+    // OAuth: resolve a fresh token (refresh if expired), then try apiKey paths
+    const token = await resolveOAuthToken(auth, setAuth)
 
-    if (typeof token === 'string' && token.length > 0) {
+    if (token !== undefined) {
       if (looksLikeApiKey(token)) {
         return { apiKey: token }
       }
@@ -225,14 +270,16 @@ export const anthropicPlugin: AuthHook = {
       }
     }
 
+    // Bearer fallback: per-request token refresh (same pattern as google/codex plugins)
     return {
       headers: {
         'anthropic-beta': OAUTH_BETA,
       },
       async fetch(request: Parameters<typeof globalThis.fetch>[0], init?: Parameters<typeof globalThis.fetch>[1]) {
         const currentAuth = await getAuth()
+        const bearerToken = await resolveOAuthToken(currentAuth, setAuth)
         const headers = new Headers(init?.headers)
-        applyBearerHeaders(headers, currentAuth.key ?? '')
+        applyBearerHeaders(headers, bearerToken ?? '')
         return globalThis.fetch(request, { ...init, headers })
       },
     }

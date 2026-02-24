@@ -311,8 +311,7 @@ const opencodeAuthScanner: DiskScanner = {
         const type = typed.type
         if (type !== 'api' && type !== 'oauth' && type !== 'wellknown') continue
 
-        const key =
-          typeof typed.key === 'string' ? typed.key : typeof typed.access === 'string' ? typed.access : undefined
+        const key = typeof typed.key === 'string' ? typed.key : undefined
         const refresh = typeof typed.refresh === 'string' ? typed.refresh : undefined
         const accountId = typeof typed.accountId === 'string' ? typed.accountId : undefined
         const expires = typeof typed.expires === 'number' ? typed.expires : undefined

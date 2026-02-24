@@ -20,10 +20,11 @@ export function getPluginForProvider(providerId: string): AuthHook | undefined {
 export async function loadPluginOptions(
   providerId: string,
   getAuth: () => Promise<AuthCredential>,
-  providerInfo: ProviderInfo
+  providerInfo: ProviderInfo,
+  setAuth: (credential: AuthCredential) => Promise<void>,
 ): Promise<Record<string, unknown> | undefined> {
   const plugin = plugins.get(providerId)
   if (!plugin) return undefined
   log('loading plugin options for provider: %s', providerId)
-  return plugin.loader(getAuth, providerInfo)
+  return plugin.loader(getAuth, providerInfo, setAuth)
 }

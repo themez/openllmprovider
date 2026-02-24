@@ -111,7 +111,10 @@ export async function buildProviderState(config: {
       const preferred = await authStore.getPreferred?.(pid, 'oauth')
       return preferred ?? authCred ?? { type: 'api' as const }
     }
-    const pluginOpts = await loadPluginOptions(pid, getAuth, { id: pid, name: catalogProvider.name })
+    const setAuth = async (credential: Parameters<AuthStore['set']>[1]) => {
+      await authStore.set(pid, credential)
+    }
+    const pluginOpts = await loadPluginOptions(pid, getAuth, { id: pid, name: catalogProvider.name }, setAuth)
     if (pluginOpts !== undefined) {
       Object.assign(options, pluginOpts)
       const pluginKey = pluginOpts.apiKey

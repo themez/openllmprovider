@@ -4,23 +4,24 @@
     "": {
       "name": "openllmprovider",
       "dependencies": {
-        "@ai-sdk/amazon-bedrock": "latest",
-        "@ai-sdk/anthropic": "latest",
-        "@ai-sdk/azure": "latest",
-        "@ai-sdk/google": "latest",
-        "@ai-sdk/google-vertex": "latest",
-        "@ai-sdk/groq": "latest",
-        "@ai-sdk/mistral": "latest",
-        "@ai-sdk/openai": "latest",
-        "@ai-sdk/openai-compatible": "latest",
-        "@ai-sdk/xai": "latest",
-        "@openrouter/ai-sdk-provider": "latest",
-        "debug": "latest",
+        "debug": "^4.3.0",
       },
       "devDependencies": {
-        "@ai-sdk/provider": "latest",
+        "@ai-sdk/amazon-bedrock": "^4.0.0",
+        "@ai-sdk/anthropic": "^3.0.0",
+        "@ai-sdk/azure": "^3.0.0",
+        "@ai-sdk/google": "^3.0.0",
+        "@ai-sdk/google-vertex": "^4.0.0",
+        "@ai-sdk/groq": "^3.0.0",
+        "@ai-sdk/mistral": "^3.0.0",
+        "@ai-sdk/openai": "^3.0.0",
+        "@ai-sdk/openai-compatible": "^2.0.0",
+        "@ai-sdk/provider": "^3.0.0",
+        "@ai-sdk/xai": "^3.0.0",
         "@biomejs/biome": "^1.9.0",
-        "@types/debug": "latest",
+        "@openrouter/ai-sdk-provider": "^2.2.0",
+        "@types/bun": "^1.3.9",
+        "@types/debug": "^4.1.0",
         "@types/node": "^25.3.0",
         "tsdown": "^0.20.0",
         "tsx": "^4.21.0",
@@ -28,8 +29,32 @@
         "zod": "^3.23.0",
       },
       "peerDependencies": {
+        "@ai-sdk/amazon-bedrock": "^4.0.0",
+        "@ai-sdk/anthropic": "^3.0.0",
+        "@ai-sdk/azure": "^3.0.0",
+        "@ai-sdk/google": "^3.0.0",
+        "@ai-sdk/google-vertex": "^4.0.0",
+        "@ai-sdk/groq": "^3.0.0",
+        "@ai-sdk/mistral": "^3.0.0",
+        "@ai-sdk/openai": "^3.0.0",
+        "@ai-sdk/openai-compatible": "^2.0.0",
+        "@ai-sdk/xai": "^3.0.0",
+        "@openrouter/ai-sdk-provider": "^2.2.0",
         "zod": ">=3.20.0",
       },
+      "optionalPeers": [
+        "@ai-sdk/amazon-bedrock",
+        "@ai-sdk/anthropic",
+        "@ai-sdk/azure",
+        "@ai-sdk/google",
+        "@ai-sdk/google-vertex",
+        "@ai-sdk/groq",
+        "@ai-sdk/mistral",
+        "@ai-sdk/openai",
+        "@ai-sdk/openai-compatible",
+        "@ai-sdk/xai",
+        "@openrouter/ai-sdk-provider",
+      ],
     },
   },
   "packages": {
@@ -217,6 +242,8 @@
 
     "@tybys/wasm-util": ["@tybys/wasm-util@0.10.1", "", { "dependencies": { "tslib": "^2.4.0" } }, "sha512-9tTaPJLSiejZKx+Bmog4uSubteqTvFrVrURwkmHixBo0G4seD0zUxp98E1DzUBJxLQ3NPwXrGKDiVjwx/DpPsg=="],
 
+    "@types/bun": ["@types/bun@1.3.9", "", { "dependencies": { "bun-types": "1.3.9" } }, "sha512-KQ571yULOdWJiMH+RIWIOZ7B2RXQGpL1YQrBtLIV3FqDcCu6FsbFUBwhdKUlCKUpS3PJDsHlJ1QKlpxoVR+xtw=="],
+
     "@types/debug": ["@types/debug@4.1.12", "", { "dependencies": { "@types/ms": "*" } }, "sha512-vIChWdVG3LG1SMxEvI/AK+FWJthlrqlTu7fbrlywTkkaONwk/UAGaULXRlf8vkzFBLVm0zkMdCquhL5aOjhXPQ=="],
 
     "@types/estree": ["@types/estree@1.0.8", "", {}, "sha512-dWHzHa2WqEXI/O1E9OjrocMTKJl2mSrEolh1Iomrv6U+JuNwaHXsXx9bLu5gG7BUWFIN0skIQJQ/L1rIex4X6w=="],
@@ -254,6 +281,8 @@
     "brace-expansion": ["brace-expansion@5.0.2", "", { "dependencies": { "balanced-match": "^4.0.2" } }, "sha512-Pdk8c9poy+YhOgVWw1JNN22/HcivgKWwpxKq04M/jTmHyCZn12WPJebZxdjSa5TmBqISrUSgNYU3eRORljfCCw=="],
 
     "buffer-equal-constant-time": ["buffer-equal-constant-time@1.0.1", "", {}, "sha512-zRpUiDwd/xk6ADqPMATG8vc9VPrkck7T07OIx0gnjmJAnHnTVXNQG3vfvWNuiZIkwu9KrKdA1iJKfsfTVxE6NA=="],
+
+    "bun-types": ["bun-types@1.3.9", "", { "dependencies": { "@types/node": "*" } }, "sha512-+UBWWOakIP4Tswh0Bt0QD0alpTY8cb5hvgiYeWCMet9YukHbzuruIEeXC2D7nMJPB12kbh8C7XJykSexEqGKJg=="],
 
     "cac": ["cac@6.7.14", "", {}, "sha512-b6Ilus+c3RrdDk+JhLKUAQfzzgLEPy6wcXqS7f/xe1EETvsDP6GORG7SFuOs6cID5YkqchW/LXZbX5bc8j7ZcQ=="],
 
