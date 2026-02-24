@@ -160,7 +160,8 @@ async function refreshAccessToken(refreshToken: string): Promise<TokenResponse> 
   })
 
   if (!res.ok) {
-    throw new Error(`Anthropic token refresh failed: ${res.status} ${res.statusText}`)
+    const body = await res.text().catch(() => '')
+    throw new Error(`Anthropic token refresh failed: ${res.status} ${res.statusText} ${body}`)
   }
 
   const raw = (await res.json()) as Record<string, unknown>
